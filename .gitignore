@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+.next/
+out/
+build/
+
+# Database (local SQLite file)
+carmenita.db
+carmenita.db-journal
+carmenita.db-wal
+carmenita.db-shm
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+next-env.d.ts
+tsconfig.tsbuildinfo
+.turbo/
+coverage/

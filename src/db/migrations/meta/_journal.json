@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1775650330243,
+      "tag": "0000_nappy_greymalkin",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1775652584042,
+      "tag": "0001_add_variation_lineage",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1775653531345,
+      "tag": "0002_add_taxonomy",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1775677864542,
+      "tag": "0003_sparkling_black_bolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1775679788894,
+      "tag": "0004_sweet_radioactive_man",
+      "breakpoints": true
+    }
+  ]
+}
