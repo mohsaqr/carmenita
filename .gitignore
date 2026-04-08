@@ -7,6 +7,15 @@ node_modules/
 .next/
 out/
 build/
+# Static-build artifacts — build-static.sh copies these into public/
+# on every run from the root carmenita.db / node_modules copy, and
+# the CI workflow does the same in a throwaway container. They should
+# not be tracked because they're derivatives, not sources.
+public/carmenita.db
+public/sql-wasm.wasm
+# Temporary stash dir used by build-static.sh while src/app/api is
+# moved aside during a static export. Cleaned by the trap handler.
+.build-stash/
 
 # Database runtime sidecars (the main carmenita.db file IS committed as seed data;
 # these three are transient files SQLite creates while the DB is open and must

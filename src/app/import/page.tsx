@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -68,6 +68,14 @@ const VARIATION_TYPES: { value: VariationType; label: string }[] = [
 ];
 
 export default function ImportPage() {
+  return (
+    <Suspense fallback={null}>
+      <ImportPageInner />
+    </Suspense>
+  );
+}
+
+function ImportPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const provider = useActiveProvider();

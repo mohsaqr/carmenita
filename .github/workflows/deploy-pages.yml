@@ -1,0 +1,64 @@
+name: Deploy to GitHub Pages
+
+on:
+  # Publish on every push to main so `git push` is the deploy step.
+  push:
+    branches: [main]
+  # Allow ad-hoc manual deploys from the Actions tab.
+  workflow_dispatch:
+
+# Allow exactly one concurrent deployment. Queue a new run if one is
+# already underway, then publish the most recent. This mirrors the
+# official GitHub Pages starter workflow.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `better-sqlite3` is needed at build time for the static-params
+      # helper that enumerates the 14 shipped quiz IDs from carmenita.db.
+      # `npm ci` already compiles it, so no extra step.
+
+      - name: Build static site
+        # PAGES_BASE_PATH must match the Pages deployment path:
+        #   - User/org sites (user.github.io)         → ""
+        #   - Project sites  (user.github.io/<repo>)  → "/<repo>"
+        env:
+          PAGES_BASE_PATH: /carmenita
+        run: ./scripts/build-static.sh
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

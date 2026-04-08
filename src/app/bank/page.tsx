@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { Suspense, useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,16 @@ import { useAppStore } from "@/lib/store";
  * assemble a new quiz from a selection.
  */
 export default function BankPage() {
+  // Wrap in Suspense because useSearchParams requires it under
+  // `output: "export"`.
+  return (
+    <Suspense fallback={null}>
+      <BankPageInner />
+    </Suspense>
+  );
+}
+
+function BankPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const provider = useActiveProvider();

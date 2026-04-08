@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppHeader } from "@/components/AppHeader";
+import { StaticApiBootstrap } from "@/components/StaticApiBootstrap";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -29,6 +30,7 @@ export default function RootLayout({
         where those extensions actually inject attributes.
       */}
       <body className={inter.className}>
+        <StaticApiBootstrap />
         <TooltipProvider>
           <div className="flex min-h-screen w-full flex-col">
             <AppHeader />

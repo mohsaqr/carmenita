@@ -1,0 +1,632 @@
+/**
+ * Browser-side re-implementations of the HTTP /api/* routes used by
+ * the client code. Each handler returns a plain JSON-serializable
+ * object that the interceptor wraps in a `Response`.
+ *
+ * The handlers are intentionally thin: they run against the sql.js
+ * Database from `./db.ts`, which mirrors the shipped `carmenita.db`
+ * schema 1:1. SQL text is kept as close to the server routes as
+ * possible so bugs here are easy to cross-reference with the real
+ * implementation in `src/app/api/`.
+ *
+ * Scope: only the endpoints required to BROWSE, TAKE, and REVIEW
+ * quizzes. LLM-backed endpoints (generate-quiz, explain, retag,
+ * variations) are not implemented — the static deploy has no API key
+ * proxy and no server to run LLM calls.
+ */
+import { flushLocalDb, queryAll, queryOne, run } from "./db";
+
+// ── Generic helpers ─────────────────────────────────────────────────────
+
+function uuid(): string {
+  // crypto.randomUUID is available in all evergreen browsers.
+  return crypto.randomUUID();
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function jsonParse<T>(raw: unknown, fallback: T): T {
+  if (raw == null) return fallback;
+  if (typeof raw !== "string") return raw as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+// ── /api/quizzes ────────────────────────────────────────────────────────
+
+export function listQuizzes() {
+  const rows = queryAll<{
+    id: string;
+    title: string;
+    document_id: string | null;
+    document_filename: string | null;
+    provider: string;
+    model: string;
+    created_at: string;
+    settings: string;
+    question_count: number;
+    attempt_count: number;
+    best_score: number | null;
+    last_attempt_at: string | null;
+  }>(
+    `SELECT
+       q.id,
+       q.title,
+       q.document_id,
+       d.filename AS document_filename,
+       q.provider,
+       q.model,
+       q.created_at,
+       q.settings,
+       (SELECT COUNT(*) FROM quiz_questions WHERE quiz_id = q.id) AS question_count,
+       (SELECT COUNT(*) FROM attempts WHERE quiz_id = q.id AND completed_at IS NOT NULL) AS attempt_count,
+       (SELECT MAX(score) FROM attempts WHERE quiz_id = q.id AND completed_at IS NOT NULL) AS best_score,
+       (SELECT MAX(completed_at) FROM attempts WHERE quiz_id = q.id AND completed_at IS NOT NULL) AS last_attempt_at
+     FROM quizzes q
+     LEFT JOIN documents d ON d.id = q.document_id
+     WHERE q.deleted_at IS NULL
+     ORDER BY q.created_at DESC`,
+  );
+
+  return {
+    quizzes: rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      documentId: r.document_id,
+      documentFilename: r.document_filename,
+      provider: r.provider,
+      model: r.model,
+      createdAt: r.created_at,
+      settings: jsonParse(r.settings, {}),
+      questionCount: r.question_count,
+      attemptCount: r.attempt_count,
+      bestScore: r.best_score,
+      lastAttemptAt: r.last_attempt_at,
+    })),
+  };
+}
+
+// ── /api/quizzes/[id] ───────────────────────────────────────────────────
+
+export function getQuiz(id: string) {
+  const quiz = queryOne<Record<string, unknown>>(
+    `SELECT * FROM quizzes WHERE id = ? AND deleted_at IS NULL`,
+    [id],
+  );
+  if (!quiz) {
+    return { status: 404, body: { error: "Quiz not found" } };
+  }
+
+  const rows = queryAll<Record<string, unknown>>(
+    `SELECT
+       q.id, q.type, q.question, q.options, q.correct_answer, q.explanation,
+       q.difficulty, q.bloom_level, q.subject, q.lesson, q.topic, q.tags,
+       q.source_passage, q.source_type, q.source_document_id, q.source_label,
+       q.notes, q.created_at, q.user_id,
+       qq.idx
+     FROM quiz_questions qq
+     INNER JOIN questions q ON q.id = qq.question_id
+     WHERE qq.quiz_id = ?
+     ORDER BY qq.idx ASC`,
+    [id],
+  );
+
+  return {
+    body: {
+      quiz: {
+        ...quiz,
+        settings: jsonParse(quiz.settings, {}),
+        documentId: quiz.document_id,
+        createdAt: quiz.created_at,
+        deletedAt: quiz.deleted_at,
+        userId: quiz.user_id,
+      },
+      questions: rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        question: r.question,
+        options: jsonParse<string[]>(r.options, []),
+        correctAnswer: jsonParse<number | number[]>(r.correct_answer, 0),
+        explanation: r.explanation,
+        difficulty: r.difficulty,
+        bloomLevel: r.bloom_level,
+        subject: r.subject,
+        lesson: r.lesson,
+        topic: r.topic,
+        tags: jsonParse<string[]>(r.tags, []),
+        sourcePassage: r.source_passage,
+        sourceType: r.source_type,
+        sourceDocumentId: r.source_document_id,
+        sourceLabel: r.source_label,
+        notes: r.notes,
+        createdAt: r.created_at,
+        userId: r.user_id,
+        idx: r.idx,
+      })),
+    },
+  };
+}
+
+// ── DELETE /api/quizzes/[id] (soft delete) ──────────────────────────────
+
+export async function softDeleteQuiz(id: string) {
+  const changes = run(
+    `UPDATE quizzes SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`,
+    [nowIso(), id],
+  );
+  if (changes === 0) {
+    return { status: 404, body: { error: "Quiz not found" } };
+  }
+  await flushLocalDb();
+  return { body: { trashed: id, deletedAt: nowIso() } };
+}
+
+// ── /api/attempts ──────────────────────────────────────────────────────
+
+export function listAttempts() {
+  const rows = queryAll<{
+    id: string;
+    quiz_id: string;
+    quiz_title: string;
+    started_at: string;
+    completed_at: string | null;
+    score: number | null;
+    question_count: number;
+  }>(
+    `SELECT
+       a.id, a.quiz_id, q.title AS quiz_title,
+       a.started_at, a.completed_at, a.score,
+       (SELECT COUNT(*) FROM quiz_questions WHERE quiz_id = a.quiz_id) AS question_count
+     FROM attempts a
+     INNER JOIN quizzes q ON q.id = a.quiz_id
+     WHERE q.deleted_at IS NULL
+     ORDER BY a.started_at DESC`,
+  );
+  return {
+    attempts: rows.map((r) => ({
+      id: r.id,
+      quizId: r.quiz_id,
+      quizTitle: r.quiz_title,
+      startedAt: r.started_at,
+      completedAt: r.completed_at,
+      score: r.score,
+      questionCount: r.question_count,
+    })),
+  };
+}
+
+export async function createAttempt(body: { quizId: string }) {
+  if (!body?.quizId) {
+    return { status: 400, body: { error: "quizId required" } };
+  }
+  const quiz = queryOne(
+    `SELECT id FROM quizzes WHERE id = ? AND deleted_at IS NULL`,
+    [body.quizId],
+  );
+  if (!quiz) {
+    return { status: 404, body: { error: "Quiz not found" } };
+  }
+  const id = uuid();
+  const startedAt = nowIso();
+  run(
+    `INSERT INTO attempts (id, quiz_id, started_at, completed_at, score, user_id) VALUES (?, ?, ?, NULL, NULL, NULL)`,
+    [id, body.quizId, startedAt],
+  );
+  await flushLocalDb();
+  return { body: { id, quizId: body.quizId, startedAt } };
+}
+
+export function getAttempt(id: string) {
+  const attempt = queryOne<{
+    id: string;
+    quiz_id: string;
+    started_at: string;
+    completed_at: string | null;
+    score: number | null;
+  }>(`SELECT * FROM attempts WHERE id = ?`, [id]);
+  if (!attempt) {
+    return { status: 404, body: { error: "Attempt not found" } };
+  }
+  const questionRows = queryAll<Record<string, unknown>>(
+    `SELECT
+       q.id, q.type, q.question, q.options, q.correct_answer, q.explanation,
+       q.difficulty, q.bloom_level, q.topic, q.source_passage, q.source_type,
+       q.source_document_id, q.source_label, q.notes, q.created_at, q.user_id,
+       qq.idx
+     FROM quiz_questions qq
+     INNER JOIN questions q ON q.id = qq.question_id
+     WHERE qq.quiz_id = ?
+     ORDER BY qq.idx ASC`,
+    [attempt.quiz_id],
+  );
+  const answerRows = queryAll<{
+    question_id: string;
+    user_answer: string | null;
+    is_correct: number;
+    time_ms: number;
+  }>(
+    `SELECT question_id, user_answer, is_correct, time_ms FROM answers WHERE attempt_id = ?`,
+    [id],
+  );
+  const answerMap = new Map(answerRows.map((a) => [a.question_id, a]));
+  return {
+    body: {
+      attempt: {
+        id: attempt.id,
+        quizId: attempt.quiz_id,
+        startedAt: attempt.started_at,
+        completedAt: attempt.completed_at,
+        score: attempt.score,
+      },
+      questions: questionRows.map((q) => {
+        const a = answerMap.get(q.id as string);
+        return {
+          id: q.id,
+          type: q.type,
+          question: q.question,
+          options: jsonParse<string[]>(q.options, []),
+          correctAnswer: jsonParse<number | number[]>(q.correct_answer, 0),
+          explanation: q.explanation,
+          difficulty: q.difficulty,
+          bloomLevel: q.bloom_level,
+          topic: q.topic,
+          sourcePassage: q.source_passage,
+          sourceType: q.source_type,
+          sourceDocumentId: q.source_document_id,
+          sourceLabel: q.source_label,
+          notes: q.notes,
+          createdAt: q.created_at,
+          userId: q.user_id,
+          idx: q.idx,
+          answer: a
+            ? {
+                attemptId: id,
+                questionId: a.question_id,
+                userAnswer: jsonParse<number | number[] | null>(a.user_answer, null),
+                isCorrect: a.is_correct === 1,
+                timeMs: a.time_ms,
+              }
+            : null,
+        };
+      }),
+    },
+  };
+}
+
+type SubmittedAnswer = {
+  questionId: string;
+  userAnswer: number | number[] | null;
+  timeMs: number;
+};
+
+function scoreAnswer(
+  type: string,
+  correct: number | number[],
+  submitted: number | number[] | null,
+): boolean {
+  if (submitted == null) return false;
+  if (type === "mcq-multi") {
+    if (!Array.isArray(correct) || !Array.isArray(submitted)) return false;
+    if (correct.length !== submitted.length) return false;
+    const s = new Set(correct);
+    return submitted.every((v) => s.has(v));
+  }
+  if (typeof correct !== "number" || typeof submitted !== "number") return false;
+  return correct === submitted;
+}
+
+export async function submitAttempt(
+  id: string,
+  body: { answers: SubmittedAnswer[] },
+) {
+  const attempt = queryOne<{
+    id: string;
+    quiz_id: string;
+    completed_at: string | null;
+  }>(`SELECT id, quiz_id, completed_at FROM attempts WHERE id = ?`, [id]);
+  if (!attempt) return { status: 404, body: { error: "Attempt not found" } };
+  if (attempt.completed_at) {
+    return { status: 409, body: { error: "Attempt is already submitted" } };
+  }
+
+  const qRows = queryAll<{ id: string; type: string; correct_answer: string }>(
+    `SELECT q.id, q.type, q.correct_answer
+     FROM quiz_questions qq
+     INNER JOIN questions q ON q.id = qq.question_id
+     WHERE qq.quiz_id = ?`,
+    [attempt.quiz_id],
+  );
+  const qMap = new Map(
+    qRows.map((q) => [
+      q.id,
+      { type: q.type, correct: jsonParse<number | number[]>(q.correct_answer, 0) },
+    ]),
+  );
+
+  const scored = body.answers.map((a) => {
+    const q = qMap.get(a.questionId);
+    const isCorrect = q
+      ? scoreAnswer(q.type, q.correct, a.userAnswer)
+      : false;
+    return { ...a, isCorrect };
+  });
+  const total = qRows.length;
+  const correct = scored.filter((a) => a.isCorrect).length;
+  const score = total > 0 ? correct / total : 0;
+  const completedAt = nowIso();
+
+  // Insert all answers + finalize attempt. sql.js has no explicit
+  // transaction helper; wrap the batch in BEGIN/COMMIT manually.
+  run("BEGIN");
+  try {
+    for (const a of scored) {
+      run(
+        `INSERT OR REPLACE INTO answers (attempt_id, question_id, user_answer, is_correct, time_ms) VALUES (?, ?, ?, ?, ?)`,
+        [
+          id,
+          a.questionId,
+          a.userAnswer == null ? null : JSON.stringify(a.userAnswer),
+          a.isCorrect ? 1 : 0,
+          a.timeMs,
+        ],
+      );
+    }
+    run(`UPDATE attempts SET completed_at = ?, score = ? WHERE id = ?`, [
+      completedAt,
+      score,
+      id,
+    ]);
+    run("COMMIT");
+  } catch (err) {
+    run("ROLLBACK");
+    throw err;
+  }
+  await flushLocalDb();
+
+  return {
+    body: {
+      attemptId: id,
+      score,
+      correct,
+      total,
+      completedAt,
+      answers: scored.map((a) => ({
+        attemptId: id,
+        questionId: a.questionId,
+        userAnswer: a.userAnswer,
+        isCorrect: a.isCorrect,
+        timeMs: a.timeMs,
+      })),
+    },
+  };
+}
+
+// ── /api/bank/taxonomy ──────────────────────────────────────────────────
+
+export function getTaxonomy() {
+  const subjects = queryAll<{ subject: string }>(
+    `SELECT DISTINCT subject FROM questions WHERE subject IS NOT NULL AND subject != '' ORDER BY subject`,
+  ).map((r) => r.subject);
+  const lessons = queryAll<{ lesson: string }>(
+    `SELECT DISTINCT lesson FROM questions WHERE lesson IS NOT NULL AND lesson != '' ORDER BY lesson`,
+  ).map((r) => r.lesson);
+  const topics = queryAll<{ topic: string }>(
+    `SELECT DISTINCT topic FROM questions WHERE topic IS NOT NULL AND topic != '' ORDER BY topic`,
+  ).map((r) => r.topic);
+  const tags = queryAll<{ value: string }>(
+    `SELECT DISTINCT value FROM questions, json_each(questions.tags) ORDER BY value`,
+  ).map((r) => r.value);
+  return { subjects, lessons, topics, tags };
+}
+
+// ── /api/bank/questions ─────────────────────────────────────────────────
+
+export function listBankQuestions(url: URL) {
+  const sp = url.searchParams;
+  const where: string[] = [];
+  const params: Array<string | number | null> = [];
+  const push = (clause: string, ...p: Array<string | number | null>) => {
+    where.push(clause);
+    params.push(...p);
+  };
+  if (sp.get("topic")) push("topic = ?", sp.get("topic"));
+  if (sp.get("subject")) push("subject = ?", sp.get("subject"));
+  if (sp.get("lesson")) push("lesson = ?", sp.get("lesson"));
+  if (sp.get("difficulty")) push("difficulty = ?", sp.get("difficulty"));
+  if (sp.get("bloomLevel")) push("bloom_level = ?", sp.get("bloomLevel"));
+  if (sp.get("sourceType")) push("source_type = ?", sp.get("sourceType"));
+  if (sp.get("tag")) {
+    const t = (sp.get("tag") || "").replace(/"/g, '\\"');
+    push(`tags LIKE ?`, `%"${t}"%`);
+  }
+  const idsCsv = sp.get("ids");
+  if (idsCsv) {
+    const ids = idsCsv.split(",").map((s) => s.trim()).filter(Boolean);
+    if (ids.length > 0) {
+      where.push(`id IN (${ids.map(() => "?").join(",")})`);
+      params.push(...ids);
+    }
+  }
+  const limit = Math.min(parseInt(sp.get("limit") || "500", 10) || 500, 2000);
+
+  const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const rows = queryAll<Record<string, unknown>>(
+    `SELECT * FROM questions ${whereSql} ORDER BY created_at DESC LIMIT ?`,
+    [...params, limit],
+  );
+
+  return {
+    questions: rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      question: r.question,
+      options: jsonParse<string[]>(r.options, []),
+      correctAnswer: jsonParse<number | number[]>(r.correct_answer, 0),
+      explanation: r.explanation,
+      difficulty: r.difficulty,
+      bloomLevel: r.bloom_level,
+      subject: r.subject,
+      lesson: r.lesson,
+      topic: r.topic,
+      tags: jsonParse<string[]>(r.tags, []),
+      sourcePassage: r.source_passage,
+      sourceType: r.source_type,
+      sourceDocumentId: r.source_document_id,
+      sourceLabel: r.source_label,
+      notes: r.notes,
+      parentQuestionId: r.parent_question_id,
+      variationType: r.variation_type,
+      createdAt: r.created_at,
+      userId: r.user_id,
+    })),
+    total: rows.length,
+  };
+}
+
+// ── PATCH /api/bank/questions/[id] (notes) ──────────────────────────────
+
+export async function updateQuestion(id: string, body: { notes?: string | null }) {
+  if (body.notes !== undefined) {
+    const normalized = body.notes == null || body.notes === "" ? null : body.notes;
+    const changes = run(`UPDATE questions SET notes = ? WHERE id = ?`, [
+      normalized,
+      id,
+    ]);
+    if (changes === 0) {
+      return { status: 404, body: { error: "Question not found" } };
+    }
+    await flushLocalDb();
+  }
+  return { body: { id, updated: 1 } };
+}
+
+// ── POST /api/bank/quick-quiz ───────────────────────────────────────────
+
+export async function quickQuiz(body: {
+  title?: string;
+  count: number;
+  candidateIds?: string[];
+  shuffle?: boolean;
+}) {
+  let pool: string[] = [];
+  if (body.candidateIds && body.candidateIds.length > 0) {
+    const placeholders = body.candidateIds.map(() => "?").join(",");
+    const rows = queryAll<{ id: string }>(
+      `SELECT id FROM questions WHERE id IN (${placeholders})`,
+      body.candidateIds,
+    );
+    pool = rows.map((r) => r.id);
+  }
+  if (pool.length === 0) {
+    return {
+      status: 404,
+      body: { error: "No questions match the requested criteria." },
+    };
+  }
+
+  const working = [...pool];
+  if (body.shuffle !== false) {
+    for (let i = working.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [working[i], working[j]] = [working[j], working[i]];
+    }
+  }
+  const chosen = working.slice(0, Math.min(body.count, working.length));
+
+  const quizId = uuid();
+  const now = nowIso();
+  const title = body.title || `Quick exam (${chosen.length} Qs)`;
+  const settings = JSON.stringify({
+    questionCount: chosen.length,
+    allowedTypes: ["mcq-single", "mcq-multi", "true-false"],
+    immediateFeedback: true,
+  });
+
+  run("BEGIN");
+  try {
+    run(
+      `INSERT INTO quizzes (id, document_id, title, settings, provider, model, created_at, deleted_at, user_id)
+       VALUES (?, NULL, ?, ?, 'bank', 'bank', ?, NULL, NULL)`,
+      [quizId, title, settings, now],
+    );
+    chosen.forEach((questionId, idx) => {
+      run(
+        `INSERT INTO quiz_questions (quiz_id, question_id, idx) VALUES (?, ?, ?)`,
+        [quizId, questionId, idx],
+      );
+    });
+    run("COMMIT");
+  } catch (err) {
+    run("ROLLBACK");
+    throw err;
+  }
+  await flushLocalDb();
+
+  return {
+    body: { quizId, questionCount: chosen.length, poolSize: pool.length },
+  };
+}
+
+// ── /api/trash ──────────────────────────────────────────────────────────
+
+export function listTrash() {
+  const rows = queryAll<Record<string, unknown>>(
+    `SELECT
+       q.id, q.title, q.document_id, d.filename AS document_filename,
+       q.provider, q.model, q.created_at, q.deleted_at, q.settings,
+       (SELECT COUNT(*) FROM quiz_questions WHERE quiz_id = q.id) AS question_count,
+       (SELECT COUNT(*) FROM attempts WHERE quiz_id = q.id AND completed_at IS NOT NULL) AS attempt_count,
+       (SELECT MAX(score) FROM attempts WHERE quiz_id = q.id AND completed_at IS NOT NULL) AS best_score,
+       (SELECT MAX(completed_at) FROM attempts WHERE quiz_id = q.id AND completed_at IS NOT NULL) AS last_attempt_at
+     FROM quizzes q
+     LEFT JOIN documents d ON d.id = q.document_id
+     WHERE q.deleted_at IS NOT NULL
+     ORDER BY q.deleted_at DESC`,
+  );
+  return {
+    quizzes: rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      documentId: r.document_id,
+      documentFilename: r.document_filename,
+      provider: r.provider,
+      model: r.model,
+      createdAt: r.created_at,
+      deletedAt: r.deleted_at,
+      settings: jsonParse(r.settings, {}),
+      questionCount: r.question_count,
+      attemptCount: r.attempt_count,
+      bestScore: r.best_score,
+      lastAttemptAt: r.last_attempt_at,
+    })),
+  };
+}
+
+export async function restoreTrash(id: string) {
+  const changes = run(
+    `UPDATE quizzes SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL`,
+    [id],
+  );
+  if (changes === 0) {
+    return { status: 404, body: { error: "Trashed quiz not found" } };
+  }
+  await flushLocalDb();
+  return { body: { restored: id } };
+}
+
+export async function permanentDeleteTrash(id: string) {
+  const changes = run(
+    `DELETE FROM quizzes WHERE id = ? AND deleted_at IS NOT NULL`,
+    [id],
+  );
+  if (changes === 0) {
+    return { status: 404, body: { error: "Trashed quiz not found" } };
+  }
+  await flushLocalDb();
+  return { body: { deleted: id } };
+}

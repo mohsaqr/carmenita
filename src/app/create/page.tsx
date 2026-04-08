@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { Suspense, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDropzone } from "react-dropzone";
@@ -74,6 +74,16 @@ const LEVELS = [
 type TabValue = "document" | "lecture" | "topic" | "import";
 
 export default function CreatePage() {
+  // useSearchParams requires a Suspense boundary when the page is
+  // statically prerendered — otherwise Next's export mode bails out.
+  return (
+    <Suspense fallback={null}>
+      <CreatePageInner />
+    </Suspense>
+  );
+}
+
+function CreatePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const provider = useActiveProvider();
