@@ -21,11 +21,18 @@ Carmenita runs entirely on your own machine — the SQLite database lives in a s
 git clone https://github.com/mohsaqr/carmenita.git
 cd carmenita
 npm install
-npm run db:migrate      # creates carmenita.db with all tables
 npm run dev             # http://localhost:3000
 ```
 
-That's it — open `http://localhost:3000/`.
+That's it — open `http://localhost:3000/`. The repo ships with a pre-populated `carmenita.db` (~1.5 MB) containing **14 lecture quizzes and 1,492 genetics questions** ready to take. No migration step is needed on first clone — the shipped DB already has the full schema applied.
+
+If you want to start from an empty bank instead:
+
+```bash
+rm -f carmenita.db
+npm run db:migrate
+npm run dev
+```
 
 ### Adding an LLM provider
 
@@ -152,6 +159,33 @@ All providers are configured entirely in the browser; your keys are never sent t
 
 For local models, Carmenita probes `{baseUrl}/models` to let you pick from actually-installed models rather than typing an ID blindly.
 
+## Password-protecting a deployed instance
+
+Carmenita ships an opt-in HTTP Basic Auth middleware (`src/middleware.ts`) that protects **every page and every `/api/*` route** when two environment variables are set on the host:
+
+```bash
+CARMENITA_USER=someone
+CARMENITA_PASS=some-long-random-string
+```
+
+Set both vars, restart the Node process, and every request triggers the browser's native basic-auth dialog. Correct credentials let the user through; wrong or missing credentials return `401 WWW-Authenticate: Basic`.
+
+Leave the vars unset (the default for local dev) and auth is off — no prompt, no interference.
+
+**Important caveats:**
+
+- **Use HTTPS.** HTTP Basic Auth sends credentials on every request in reversible base64. On plain HTTP anyone on the same network can sniff them. Vercel, Fly.io, Railway, Render and most PaaSes give you HTTPS by default. If you self-host, terminate TLS at a reverse proxy (Caddy, nginx, Traefik).
+- **Does not work on GitHub Pages.** Pages is a static file host — no Node runtime, no middleware. For a static deploy, put the whole site behind Cloudflare Access or a similar edge auth layer.
+- The credentials live in the host's env vars. Don't commit a `.env` file with them set.
+- The LLM-facing `/api/*` routes are protected too, not just pages. A scraper can't hit `/api/bank/questions?limit=2000` without the password.
+
+For a quick local test:
+
+```bash
+CARMENITA_USER=test CARMENITA_PASS=secret npm run dev
+# open http://localhost:3000/ → browser prompts for credentials
+```
+
 ## Resetting the database
 
 If you ever want to start over:
@@ -161,7 +195,7 @@ rm -f carmenita.db carmenita.db-wal carmenita.db-shm carmenita.db-journal
 npm run db:migrate
 ```
 
-This wipes your bank, quizzes, attempts and notes, then recreates the schema from scratch. There's no built-in confirmation because the file is gitignored and outside the repo anyway.
+This wipes the shipped bank of 1,492 questions and 14 lecture quizzes, then recreates the schema from scratch with an empty DB. The shipped `carmenita.db` is committed to the repo, so this only affects your local working copy — `git checkout carmenita.db` brings back the seeded version.
 
 ## Tests
 

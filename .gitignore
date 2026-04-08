@@ -8,8 +8,9 @@ node_modules/
 out/
 build/
 
-# Database (local SQLite file)
-carmenita.db
+# Database runtime sidecars (the main carmenita.db file IS committed as seed data;
+# these three are transient files SQLite creates while the DB is open and must
+# never be committed — they change every time the dev server runs).
 carmenita.db-journal
 carmenita.db-wal
 carmenita.db-shm
