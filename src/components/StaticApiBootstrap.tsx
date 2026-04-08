@@ -3,95 +3,23 @@
 import { useEffect, useState } from "react";
 
 /**
- * Installs the sql.js-backed fetch interceptor when the app runs as a
- * fully static build (GitHub Pages).
+ * React-tree bootstrap for the static build.
  *
- * Two-stage install to dodge a race condition:
+ * The fetch interceptor itself is installed by a synchronous inline
+ * `<script>` in `src/app/layout.tsx` (see `INTERCEPTOR_SHIM`). That
+ * shim starts queueing `/api/*` calls at HTML parse time — before
+ * any React code runs — so this component's job is only to:
  *
- *  1. **Module-level shim** (runs when this file is first evaluated
- *     as part of the layout's client bundle). This synchronously
- *     monkey-patches `window.fetch` with a tiny trampoline that buffers
- *     `/api/*` calls and lazy-imports the real interceptor on the
- *     first one. Crucially, this runs BEFORE any page component's
- *     `useEffect` fires — layouts are evaluated before pages during
- *     React client boot — so no `fetch('/api/...')` can slip through
- *     to the real network.
+ *   1. Lazy-load the real sql.js-backed interceptor module, which
+ *      replaces the inline shim's queue with actual routing and
+ *      drains any calls that were buffered.
+ *   2. Eagerly warm the local DB so the first real API call doesn't
+ *      pay the 1.5 MB seed-DB download latency.
+ *   3. Show a persistent error banner if WASM/IndexedDB is blocked
+ *      (otherwise the user sees silent blank screens).
  *
- *  2. **Component-level effect** (mounts in the React tree). Handles
- *     the error-banner UI if the DB/WASM fails to load. Also eagerly
- *     warms the DB so the first real API call doesn't pay the 1.5 MB
- *     download latency.
- *
- * In normal (non-static) builds both the module shim and the effect
- * are gated on `process.env.NEXT_PUBLIC_STATIC_BUILD === "1"` and
- * become no-ops. Normal `npm run dev` / Node server deploys are
- * unaffected. sql.js and the handlers are dynamically imported, so
- * they never bloat the normal build's bundle.
+ * Gated on `NEXT_PUBLIC_STATIC_BUILD` — a no-op in normal Node builds.
  */
-
-// ─────────────────────────────────────────────────────────────────────────
-// STAGE 1 — synchronous module-level shim
-// ─────────────────────────────────────────────────────────────────────────
-
-if (
-  typeof window !== "undefined" &&
-  process.env.NEXT_PUBLIC_STATIC_BUILD === "1"
-) {
-  const realFetch = window.fetch.bind(window);
-  let interceptorReady: Promise<void> | null = null;
-
-  // Lazy-load the interceptor module on first /api/* call. Once it's
-  // ready, we "uninstall" this shim by restoring realFetch and letting
-  // the real installer replace it.
-  function loadInterceptor(): Promise<void> {
-    if (!interceptorReady) {
-      interceptorReady = (async () => {
-        const { installLocalFetchInterceptor } = await import(
-          "@/lib/local-api/interceptor"
-        );
-        // Restore the original fetch so the real installer can capture
-        // it as `originalFetch`. Otherwise it would capture this shim
-        // and recurse.
-        window.fetch = realFetch;
-        installLocalFetchInterceptor();
-      })();
-    }
-    return interceptorReady;
-  }
-
-  window.fetch = (async (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    let pathname = "";
-    try {
-      const reqUrl =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
-      pathname = new URL(reqUrl, window.location.origin).pathname;
-    } catch {
-      return realFetch(input, init);
-    }
-    const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
-    const normalized =
-      base && pathname.startsWith(base) ? pathname.slice(base.length) : pathname;
-    if (!normalized.startsWith("/api/")) {
-      return realFetch(input, init);
-    }
-    // It's an /api/ call — wait for the real interceptor to install,
-    // then re-dispatch via the now-replaced window.fetch.
-    await loadInterceptor();
-    return window.fetch(input, init);
-  }) as typeof window.fetch;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// STAGE 2 — React component: DB warm-up + error banner
-// ─────────────────────────────────────────────────────────────────────────
-
 export function StaticApiBootstrap() {
   const [error, setError] = useState<string | null>(null);
 
@@ -100,6 +28,14 @@ export function StaticApiBootstrap() {
     let cancelled = false;
     (async () => {
       try {
+        // Install the real interceptor FIRST so any buffered calls
+        // from the inline shim get drained before we try to warm the
+        // DB (which itself goes through fetch for the seed .db file).
+        const { installLocalFetchInterceptor } = await import(
+          "@/lib/local-api/interceptor"
+        );
+        installLocalFetchInterceptor();
+
         const { initLocalDb } = await import("@/lib/local-api/db");
         await initLocalDb();
       } catch (err) {

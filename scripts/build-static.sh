@@ -91,4 +91,12 @@ STATIC_BUILD=1 \
   NEXT_PUBLIC_BASE_PATH="${PAGES_BASE_PATH:-}" \
   npx next build
 
+# Post-build: hoist the inline fetch-interceptor shim to be the FIRST
+# tag inside every HTML file's <head>. Next App Router won't let us
+# place it ahead of its own async chunk <script> tags from the React
+# tree, so we rewrite the HTML directly. This closes the last possible
+# race window between async chunk execution and the shim's installation.
+echo "[build-static] hoisting fetch shim into HTML files..."
+node scripts/inject-shim.mjs out "${PAGES_BASE_PATH:-}"
+
 echo "[build-static] build complete — output in ./out"

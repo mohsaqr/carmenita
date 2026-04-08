@@ -13,6 +13,21 @@ export const metadata: Metadata = {
   description: "Generate multiple-choice quizzes from your documents and track your learning over time.",
 };
 
+/*
+ * The inline fetch-interceptor shim is NOT rendered from this file.
+ * Instead, `scripts/inject-shim.mjs` runs after `next build` and
+ * hoists the shim <script> tag to be the first child of <head> in
+ * every exported HTML file. See that script for the rationale and
+ * the full shim body.
+ *
+ * Why the post-build hoist: rendering the <script> here caused Next
+ * App Router to serialize it into `self.__next_s.push(...)` — that
+ * re-inserts the same script AFTER hydration, overwriting the real
+ * sql.js interceptor back to the queueing shim and stranding every
+ * subsequent /api call. Removing it from the React tree prevents
+ * the double-injection; the post-build step is the only source.
+ */
+
 export default function RootLayout({
   children,
 }: Readonly<{

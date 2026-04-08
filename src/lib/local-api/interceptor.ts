@@ -193,13 +193,39 @@ async function route(req: Request): Promise<Response | null> {
  * Install the interceptor exactly once on the window.fetch global.
  * Idempotent so React strict-mode double-invocation in dev doesn't
  * chain it twice.
+ *
+ * At install time we also drain any queue built up by the inline
+ * `<script>` shim in `src/app/layout.tsx`. That shim starts buffering
+ * `/api/*` calls at HTML parse time — before React has even hydrated
+ * — so page components that call fetch inside a first-render effect
+ * don't lose their requests to the real network.
  */
+type QueuedCall = {
+  input: RequestInfo | URL;
+  init?: RequestInit;
+  resolve: (r: Response) => void;
+  reject: (e: unknown) => void;
+};
+
+type CarmenitaWindow = Window & {
+  __carmenitaRealFetch?: typeof fetch;
+  __carmenitaFetchQueue?: QueuedCall[];
+  __carmenitaShimActive?: boolean;
+};
+
 export function installLocalFetchInterceptor(): void {
   if (typeof window === "undefined") return;
   if (installed) return;
   installed = true;
 
-  const originalFetch = window.fetch.bind(window);
+  const w = window as CarmenitaWindow;
+
+  // Capture the ORIGINAL fetch. If the inline shim ran first it
+  // stashed the real fetch on window.__carmenitaRealFetch; otherwise
+  // the current window.fetch is still the browser's built-in.
+  const originalFetch = (w.__carmenitaRealFetch ?? window.fetch).bind(window);
+
+  w.__carmenitaRealFetch = originalFetch;
 
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     // Fast path: only intercept /api/* URLs. Everything else (HTML
@@ -240,4 +266,31 @@ export function installLocalFetchInterceptor(): void {
       );
     }
   };
+
+  // Drain any calls that were queued by the inline shim before this
+  // real interceptor had a chance to install. Each queued entry is a
+  // pending Promise returned to the caller; we dispatch through the
+  // now-installed window.fetch and resolve/reject accordingly.
+  const queue = w.__carmenitaFetchQueue;
+  if (queue && queue.length > 0) {
+    // Reset the global BEFORE draining so any new /api calls made
+    // during drain go through window.fetch directly (now the real
+    // interceptor), not back into the queue.
+    w.__carmenitaFetchQueue = [];
+    w.__carmenitaShimActive = false;
+    for (const call of queue) {
+      window
+        .fetch(call.input, call.init)
+        .then(call.resolve, call.reject);
+    }
+  } else {
+    w.__carmenitaShimActive = false;
+  }
+  if (typeof console !== "undefined") {
+    console.log(
+      `[carmenita] real fetch interceptor installed, drained ${
+        queue ? queue.length : 0
+      } queued call(s)`,
+    );
+  }
 }
