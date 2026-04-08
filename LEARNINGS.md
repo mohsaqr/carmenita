@@ -2,6 +2,32 @@
 
 Pitfalls, data quirks, and non-obvious discoveries from building Carmenita. Read this before starting a new task — each entry cost real debugging time to figure out the first time.
 
+### 2026-04-09 (GitHub Pages static build session)
+
+- **`output: "export"` is allergic to dynamic server routes**: Next 16's static export mode aborts if `src/app/api/` contains any route handler, even one that's never called by the exported pages. The trick (borrowed from handai) is to physically move `src/app/api/` out of the tree during the build via a shell script's EXIT trap. `scripts/build-static.sh` implements this. Same goes for `src/middleware.ts` — it references `NextRequest` which the static export can't resolve.
+
+- **`generateStaticParams` must live in a Server Component**: If a dynamic-route `page.tsx` is marked `"use client"`, you literally cannot export `generateStaticParams` from it — Next throws a build-time error. The fix is to split the page into `page.tsx` (server wrapper, exports `generateStaticParams` and default-exports an async function that awaits params and renders the client component) and `*.client.tsx` (the original `"use client"` UI, receiving the IDs as plain props rather than via `use(params)`).
+
+- **`dynamicParams = true` is silently forbidden under `output: "export"`**: Next errors with `"dynamicParams: true" cannot be used with "output: export"`. Set it to `false` (or omit it — the default becomes `false` in export mode). This means any ID not in `generateStaticParams` is a hard 404 on GitHub Pages, which is the core reason client-created quiz IDs don't deep-link without a SPA 404.html redirect.
+
+- **`useSearchParams` bails out of static rendering unless wrapped in `<Suspense>`**: Static export forces CSR for any page that calls it, and the bailout fails the build with `"useSearchParams() should be wrapped in a suspense boundary"`. Fix is cheap — add a 3-line outer wrapper that renders `<Suspense fallback={null}><InnerPage /></Suspense>`. Required in `/create`, `/bank`, `/import` — any page reading URL query params.
+
+- **The Next 16 `eslint` config key was removed**: Setting `eslint: { ignoreDuringBuilds: true }` in `next.config.ts` is no longer supported in Next 16 — it emits `"Unrecognized key(s) in object: 'eslint'"`. `typescript.ignoreBuildErrors` is still valid. For lint skipping, either run the linter separately or accept the old warnings.
+
+- **`npm ci` chokes on macOS-generated lockfiles via EBADPLATFORM**: When a lockfile is generated on macOS with npm 10+, the optional dependency entries for platform-specific binaries (`@esbuild/netbsd-arm64`, `@esbuild/darwin-arm64`, etc.) are recorded with their native `os`/`cpu` constraints. `npm ci` on the Linux runner then rejects them as "Unsupported platform" even though they're optional. Workaround: use `npm install --no-audit --no-fund` in CI instead of `npm ci`. Slower but correct. Alternative: regenerate the lockfile in Docker on Linux before committing.
+
+- **`sql.js` ships a separate WASM file that must be co-located**: `sql-wasm.wasm` lives in `node_modules/sql.js/dist/` and is fetched at runtime by `initSqlJs()` via a `locateFile` callback. `scripts/build-static.sh` copies it into `public/` so it's served as `/sql-wasm.wasm` (or `/carmenita/sql-wasm.wasm` under a sub-path). Forget this and `initSqlJs()` hangs forever looking for the wasm blob.
+
+- **sql.js has no transaction helper — use raw `BEGIN`/`COMMIT`**: `better-sqlite3.transaction(fn)` doesn't exist in sql.js. For multi-statement atomicity, run `db.run("BEGIN")` / `db.run("COMMIT")` manually, with a `try/catch` that calls `ROLLBACK` on failure. See `submitAttempt` and `quickQuiz` in `src/lib/local-api/handlers.ts`.
+
+- **`better-sqlite3` is SYNCHRONOUS even when static build calls it**: When `generateStaticParams` reads the seed DB at build time via `better-sqlite3`, there's no `await` on the actual query — the driver returns the result array directly. Same as the existing server routes. The `await import("better-sqlite3")` in `static-params.ts` is just for tree-shaking the dep out of paths that don't need it.
+
+- **GitHub Free + private repo = no Pages**: `gh api -X POST repos/<user>/<repo>/pages` returns `422: "Your current plan does not support GitHub Pages for this repository"`. Pro ($4/mo) makes Pages available for private repos but the resulting Pages site is still public (only Enterprise Cloud supports private Pages). For a password-protected static deploy, the realistic options are Cloudflare Pages + Cloudflare Access, or hosting somewhere that supports upstream basic auth (Netlify with their password feature, Vercel with deployment protection, etc.).
+
+- **`NEXT_PUBLIC_*` env vars are the only way to ship build-time values to client bundles in static mode**: In normal Node builds, client components can read `process.env.MY_VAR` at runtime because the server has the env. In static exports, `process.env.*` is *inlined* at build time — and only values prefixed with `NEXT_PUBLIC_` are kept. We use `NEXT_PUBLIC_STATIC_BUILD` (gate the interceptor) and `NEXT_PUBLIC_BASE_PATH` (sub-path for the sql.js loader).
+
+- **IndexedDB is the right storage for a 1.5 MB SQLite blob, not localStorage**: localStorage has a ~5 MB per-origin quota (and has to share it with Zustand). IndexedDB has gigabyte-scale quotas and supports binary `Uint8Array` natively without base64 bloat. 30-line hand-rolled wrapper (open → get → put) is simpler than pulling in `idb-keyval`.
+
 ### 2026-04-08 (Unified Creation Hub session)
 
 - **PPTX is a ZIP of XML, not a proprietary format**: `.pptx` files are OOXML — a standard zip archive with `ppt/slides/slide*.xml` as the per-slide text. No dedicated PPTX library needed. A regex on `<a:t>…</a:t>` (DrawingML leaf text nodes) plus JSZip gets you all the slide text. Use `[^<]*` inside the regex (not `.*?`) so it can never span a tag boundary if the format ever nests markup inside text runs.

@@ -2,6 +2,30 @@
 
 Human-readable changelog independent of git. Newest entries at top.
 
+### 2026-04-09 — GitHub Pages static deploy + sql.js fetch interceptor
+
+Stands up a fully static build target for GitHub Pages. The shipped `carmenita.db` is loaded into an in-browser sql.js instance at runtime, every `fetch('/api/*')` is intercepted and served from there, and mutations (attempts, notes, new quizzes) are flushed to IndexedDB so per-browser progress persists. The normal Node build path is untouched.
+
+- `next.config.ts`: added `STATIC_BUILD=1` env toggle. When set, switches `output` from `"standalone"` to `"export"`, applies `basePath` + `assetPrefix` from `PAGES_BASE_PATH`, disables the image optimizer, and ignores TS build errors (since the stripped API routes cause dangling-import noise).
+- `scripts/build-static.sh`: NEW. Stashes `src/app/api/` and `src/middleware.ts` into `.build-stash/` (Next refuses to statically export dynamic server routes), copies `carmenita.db` and `node_modules/sql.js/dist/sql-wasm.wasm` into `public/`, runs `next build` with the STATIC envs set, restores the stashed files via an EXIT trap. Safe on crashes mid-build.
+- `src/lib/local-api/static-params.ts`: NEW. Build-time only. Reads `carmenita.db` via better-sqlite3 to enumerate every non-trashed quiz ID. Used by `generateStaticParams()` in the dynamic `/quiz/[id]/*` pages. Gracefully returns `["_"]` when no DB file is present.
+- `src/lib/local-api/db.ts`: NEW. sql.js bootstrap + 30-line IndexedDB wrapper. `initLocalDb()` prefers a saved copy in IDB (key `carmenita.db.blob`) over the shipped seed DB, caches the resulting `Database` in module scope. `flushLocalDb()` serializes the in-memory DB and writes to IDB — called after every mutation handler. `queryAll`/`queryOne`/`run` provide a minimal Drizzle-free query API.
+- `src/lib/local-api/handlers.ts`: NEW. 600 lines of browser-side re-implementations of the HTTP routes needed to browse, take, and review quizzes: `listQuizzes`, `getQuiz`, `softDeleteQuiz`, `listAttempts`, `createAttempt`, `getAttempt`, `submitAttempt`, `getTaxonomy`, `listBankQuestions`, `updateQuestion` (notes), `quickQuiz`, `listTrash`, `restoreTrash`, `permanentDeleteTrash`. Scoring in `submitAttempt` recomputes `isCorrect` from the stored `correct_answer` (never trusting the client) — same server-side-scoring invariant as the real Node routes.
+- `src/lib/local-api/interceptor.ts`: NEW. Installs a `window.fetch` monkey patch. Parses the URL, strips `basePath`, and dispatches `/api/*` paths to the handler functions. Non-`/api` URLs fall through to the original fetch with zero overhead. Unknown `/api` paths return a helpful `"not implemented in static build"` 404 so the UI surfaces real errors rather than hanging.
+- `src/components/StaticApiBootstrap.tsx`: NEW. Client component mounted in the root layout. Gated on `process.env.NEXT_PUBLIC_STATIC_BUILD === "1"` — in normal builds it's `return null` (zero cost). When active, dynamically imports the interceptor + eagerly warms the DB so the first API call doesn't pay the 1.5 MB download latency. Red error banner if WASM/IDB is blocked.
+- `src/app/layout.tsx`: mounts `<StaticApiBootstrap />` above the TooltipProvider so its effect runs before any page component calls fetch.
+- `src/app/quiz/[id]/page.tsx` + `Runner.client.tsx`: SPLIT. The server wrapper exports `generateStaticParams` (reads the DB at build time via `static-params.ts`) and renders a client component that takes `id` as a prop. `use(params)` is gone because client pages can't export server helpers.
+- `src/app/quiz/[id]/analytics/page.tsx` + `Analytics.client.tsx`: same split pattern.
+- `src/app/quiz/[id]/results/[attemptId]/page.tsx` + `Results.client.tsx`: same split pattern. The attemptId param is stubbed with the sentinel `"_"` at build time; actual attempt data loads client-side from the fetch interceptor / IDB.
+- `src/app/create/page.tsx`, `src/app/bank/page.tsx`, `src/app/import/page.tsx`: wrapped the body that calls `useSearchParams` in a `<Suspense fallback={null}>`. Static export throws without this because `useSearchParams` forces CSR bailout.
+- `.github/workflows/deploy-pages.yml`: NEW. `checkout → setup-node@22 → npm install --no-audit → build-static.sh (PAGES_BASE_PATH=/carmenita) → upload-pages-artifact → deploy-pages`. Uses `npm install` not `npm ci` because the macOS-generated lockfile trips EBADPLATFORM on strict CI validation.
+- `package.json`: added `sql.js ^1.14.1` and `@types/sql.js ^1.4.11` as runtime deps. `package-lock.json` regenerated from scratch with full cross-platform esbuild binaries.
+- `.gitignore`: added `public/carmenita.db`, `public/sql-wasm.wasm` (derived artifacts copied by the build script), and `.build-stash/` (stash dir used during static builds).
+
+**Deployment status**: The build artifact succeeds in CI (verified: commit `376c0a8`, 51s build, artifact uploaded). The deploy step fails because GitHub Pages is not enabled on the repo — the private repo + Free plan combination blocks it. Either make the repo public, upgrade to Pro, or retarget a host that supports private repos (Cloudflare Pages, Netlify, Vercel).
+
+**Known limits of the static deploy**: (1) LLM-backed endpoints (generate-quiz, explain, retag, variations) are not in the interceptor — `/create` and those bulk actions return 404. (2) `/quiz/<runtime-uuid>/` from client-created quizzes 404s because only the 18 shipped quiz IDs are pre-rendered; a SPA 404.html fallback is the next step. (3) Password protection needs a Node host or an upstream proxy — `src/middleware.ts` cannot run on Pages.
+
 ### 2026-04-08 — Unified Creation Hub (Phase I)
 
 Unifies document generation, PPTX lecture generation, typed-topic generation, and MCQ import under a single `/create` entry point. Adds bulk Explain + Re-tag enhance actions to the bank. Replaces the legacy `/upload` page.
