@@ -158,7 +158,7 @@ function AttemptRowItem({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <Link
-            href={`/quiz/${a.quizId}`}
+            href={`/quiz?id=${a.quizId}`}
             className="font-medium hover:underline truncate"
           >
             {a.quizTitle}
@@ -184,7 +184,7 @@ function AttemptRowItem({
       </div>
       {!inProgress && (
         <Link
-          href={`/quiz/${a.quizId}/results/${a.id}`}
+          href={`/quiz/results?quizId=${a.quizId}&attemptId=${a.id}`}
           className="shrink-0 text-sm underline underline-offset-2 hover:text-foreground text-muted-foreground"
         >
           View result

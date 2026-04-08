@@ -78,7 +78,10 @@ export default function Runner({ id }: { id: string }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Submit failed (${res.status})`);
-      router.push(`/quiz/${id}/results/${attemptId}`);
+      // Navigate to the query-param results shell so the same static
+      // page works for every (quizId, attemptId) pair — attemptIds
+      // are runtime and can't be pre-rendered.
+      router.push(`/quiz/results?quizId=${id}&attemptId=${attemptId}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Submit failed");
       setSubmitting(false);

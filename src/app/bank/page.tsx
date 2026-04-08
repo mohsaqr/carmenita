@@ -329,7 +329,7 @@ function BankPageInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to build quiz");
       toast.success(`Quiz "${title}" created`);
-      router.push(`/quiz/${data.quizId}`);
+      router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Build failed");
     }
@@ -358,7 +358,7 @@ function BankPageInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
       toast.success(`Starting quiz (${data.questionCount} questions)`);
-      router.push(`/quiz/${data.quizId}`);
+      router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to start quiz");
     }

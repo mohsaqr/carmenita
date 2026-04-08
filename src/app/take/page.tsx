@@ -412,7 +412,9 @@ export default function TakeQuizPage() {
         toast.error(data?.error ?? `Failed to start exam (${res.status})`);
         return;
       }
-      router.push(`/quiz/${data.quizId}`);
+      // Use the query-param shell so runtime-generated quiz IDs work
+      // on the static export (no pre-rendered HTML for new UUIDs).
+      router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to start exam",
@@ -915,7 +917,7 @@ export default function TakeQuizPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <Link
-                            href={`/quiz/${h.id}`}
+                            href={`/quiz?id=${h.id}`}
                             className="font-medium truncate hover:underline"
                           >
                             {h.title}
@@ -941,7 +943,7 @@ export default function TakeQuizPage() {
                           </p>
                         )}
                       </div>
-                      <Link href={`/quiz/${h.id}`} className="shrink-0">
+                      <Link href={`/quiz?id=${h.id}`} className="shrink-0">
                         <Button size="sm">Retake</Button>
                       </Link>
                     </div>

@@ -53,7 +53,7 @@ export default function QuizAnalytics({ quizId }: { quizId: string }) {
           <p className="text-xs text-muted-foreground uppercase tracking-wide">Quiz analytics</p>
           <h1 className="text-2xl font-bold tracking-tight">{quiz?.title ?? "…"}</h1>
         </div>
-        <Link href={`/quiz/${quizId}`}>
+        <Link href={`/quiz?id=${quizId}`}>
           <Button>Retake quiz</Button>
         </Link>
       </header>

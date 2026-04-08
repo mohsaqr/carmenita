@@ -161,7 +161,7 @@ function ImportPageInner() {
         throw new Error(data.error || `Quick quiz failed (${res.status})`);
       }
       toast.success(`Built quiz with ${data.questionCount} questions`);
-      router.push(`/quiz/${data.quizId}`);
+      router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       toast.error(msg);

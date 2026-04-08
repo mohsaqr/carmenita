@@ -246,7 +246,7 @@ function CreatePageInner() {
       if (!res.ok) throw new Error(data.error || `Generation failed (${res.status})`);
       setJob({ status: "success", quizId: data.quizId });
       toast.success(`Generated ${data.questionCount} questions`);
-      router.push(`/quiz/${data.quizId}`);
+      router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setJob({ status: "error", message: msg });
@@ -284,7 +284,7 @@ function CreatePageInner() {
       if (!res.ok) throw new Error(data.error || `Generation failed (${res.status})`);
       setJob({ status: "success", quizId: data.quizId });
       toast.success(`Generated ${data.questionCount} questions`);
-      router.push(`/quiz/${data.quizId}`);
+      router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setJob({ status: "error", message: msg });

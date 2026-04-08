@@ -88,10 +88,10 @@ export default function Results({
       </header>
 
       <div className="flex items-center gap-3">
-        <Link href={`/quiz/${quizId}`}>
+        <Link href={`/quiz?id=${quizId}`}>
           <Button>Retake quiz</Button>
         </Link>
-        <Link href={`/quiz/${quizId}/analytics`}>
+        <Link href={`/quiz/analytics?id=${quizId}`}>
           <Button variant="outline">View improvement over time</Button>
         </Link>
         <Link href="/">

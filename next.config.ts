@@ -30,6 +30,14 @@ const nextConfig: NextConfig = {
   // Static export cannot generate optimized images on the fly because
   // there is no Node runtime. Disable the image optimizer in that mode.
   ...(isStaticExport ? { images: { unoptimized: true } } : {}),
+  // trailingSlash: true makes Next emit `out/take/index.html` instead
+  // of `out/take.html`, so GitHub Pages serves BOTH `/take` and
+  // `/take/` as the same directory index. Without this, `/take/`
+  // (with slash) returns 404 because Pages looks only for
+  // `take/index.html`. Next's client router also stops producing URLs
+  // without trailing slashes, so internal navigation is consistent
+  // with what Pages actually serves.
+  ...(isStaticExport ? { trailingSlash: true } : {}),
   // Ignore TS errors in static builds — they only come from the API
   // route handlers we strip out, so failing on them is pointless. Next
   // 16 dropped the top-level `eslint` config key, so we skip lint via

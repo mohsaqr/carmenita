@@ -128,7 +128,7 @@ export function ExamPickerCard() {
         toast.error("Server returned no quiz id.");
         return;
       }
-      router.push(`/quiz/${data.quizId}`);
+      router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to start exam",

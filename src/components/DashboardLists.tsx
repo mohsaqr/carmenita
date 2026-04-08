@@ -118,7 +118,7 @@ export function DashboardLists() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <Link
-                        href={`/quiz/${q.id}`}
+                        href={`/quiz?id=${q.id}`}
                         className="font-medium hover:underline truncate"
                       >
                         {q.title}
@@ -142,12 +142,12 @@ export function DashboardLists() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <Link href={`/quiz/${q.id}`}>
+                    <Link href={`/quiz?id=${q.id}`}>
                       <Button variant="default" size="sm">
                         Retake
                       </Button>
                     </Link>
-                    <Link href={`/quiz/${q.id}/analytics`}>
+                    <Link href={`/quiz/analytics?id=${q.id}`}>
                       <Button variant="ghost" size="sm">
                         Analytics
                       </Button>
