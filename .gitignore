@@ -13,6 +13,7 @@ build/
 # not be tracked because they're derivatives, not sources.
 public/carmenita.db
 public/sql-wasm.wasm
+public/sql-wasm-browser.wasm
 # Temporary stash dir used by build-static.sh while src/app/api is
 # moved aside during a static export. Cleaned by the trap handler.
 .build-stash/

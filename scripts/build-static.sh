@@ -65,14 +65,20 @@ if [ -f "carmenita.db" ]; then
   echo "[build-static] copied carmenita.db -> public/carmenita.db"
 fi
 
-# Copy the sql.js WASM blob into public/ so the sql.js loader can fetch
-# it at runtime. sql-wasm.wasm sits inside node_modules and must be
-# co-located with the site.
-if [ -f "node_modules/sql.js/dist/sql-wasm.wasm" ]; then
-  mkdir -p public
-  cp node_modules/sql.js/dist/sql-wasm.wasm public/sql-wasm.wasm
-  echo "[build-static] copied sql-wasm.wasm -> public/"
-fi
+# Copy sql.js WASM blobs into public/ so the sql.js loader can fetch
+# them at runtime. The `sql.js` package's default browser entry point
+# resolves to `sql-wasm-browser.js`, which requests
+# `sql-wasm-browser.wasm` via its `locateFile` callback. We also copy
+# the non-browser variant in case a consumer imports from `sql.js/dist`
+# directly. Both files live under node_modules/sql.js/dist/.
+mkdir -p public
+for f in sql-wasm-browser.wasm sql-wasm.wasm; do
+  src="node_modules/sql.js/dist/$f"
+  if [ -f "$src" ]; then
+    cp "$src" "public/$f"
+    echo "[build-static] copied $f -> public/"
+  fi
+done
 
 echo "[build-static] running next build (STATIC_BUILD=1)..."
 # NEXT_PUBLIC_* env vars are inlined into the client JS bundle:
