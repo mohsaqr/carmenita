@@ -1,88 +1,101 @@
 # Session Handoff — 2026-04-09
 
-Carmenita — local-first multiple-choice quiz platform. This session's focus was **standing up a GitHub Pages static deployment** that serves the shipped 1,492-question bank from an in-browser SQLite instance (sql.js), with writes persisted to IndexedDB per-browser.
+Carmenita — local-first multiple-choice quiz platform. This session's focus was **completing the GitHub Pages deployment** (repo made public, all runtime bugs fixed) and **wiring GIFT/Aiken/Markdown import+export into the static build's fetch interceptor**.
 
 ## Repo
 
 - **Path**: `/Users/mohammedsaqr/Documents/Github/carmenita/`
-- **Remote**: `https://github.com/mohsaqr/carmenita.git` (PRIVATE, GitHub Free plan)
-- **Branch**: `main` — synced with origin as of commit `376c0a8`
+- **Remote**: `https://github.com/mohsaqr/carmenita.git` (**PUBLIC** — changed from private this session to enable GitHub Pages on Free plan)
+- **Branch**: `main` — synced with origin as of commit `8f0228f`
+- **Live URL**: `https://saqr.me/carmenita/` (GitHub Pages, `PAGES_BASE_PATH=/carmenita`)
 - **Stack**: unchanged — Next.js 16 · React 19 · TS strict · Drizzle + better-sqlite3 (Node) / sql.js (browser) · Tailwind v4 · shadcn/ui
-- **Tests**: still **284 passing** in 14 files. 0 TS errors, 0 lint errors.
-- **Dev server**: `npm run dev` — unchanged; normal mode is unaffected by this session's changes.
+- **Tests**: **284 passing** in 14 files. 0 TS errors, 0 lint errors.
+- **Dev server**: `npm run dev` — unchanged; normal mode is unaffected.
 
 ## Completed this session
 
-### Phase I — Static-build infrastructure
+### Phase IV — GitHub Pages deployment (live)
 
-1. **`next.config.ts`** — `STATIC_BUILD=1` env toggle flips between `output: "standalone"` (Node server, default) and `output: "export"` (GH Pages). When exporting, also applies `basePath` + `assetPrefix` from `PAGES_BASE_PATH`, disables the image optimizer (`images.unoptimized`), and ignores TS build errors (API routes are stripped so dangling imports are noise).
+1. **Repo made public** via `gh repo edit --visibility public` to satisfy GitHub Free plan's Pages requirement. Pages enabled via API and configured for GitHub Actions deployment.
 
-2. **`scripts/build-static.sh`** — Moves `src/app/api/` and `src/middleware.ts` into `.build-stash/` before `next build`, runs the build with `STATIC_BUILD=1 NEXT_PUBLIC_BASE_PATH=$PAGES_BASE_PATH NEXT_PUBLIC_STATIC_BUILD=1`, and restores them via an EXIT trap (survives crashes mid-build). Also copies `carmenita.db` and `node_modules/sql.js/dist/sql-wasm.wasm` into `public/` so they're served as static assets.
+2. **WASM loading fix** — sql.js's default browser entry requests `sql-wasm-browser.wasm` (not `sql-wasm.wasm`). `build-static.sh` now copies BOTH files into `public/`.
 
-3. **Dynamic route split** — Static export needs `generateStaticParams` in a **Server Component**, but `/quiz/[id]/*` pages are `"use client"`. Fixed by splitting each dynamic page into:
-   - `page.tsx` (server wrapper) — exports `generateStaticParams` (reads the shipped DB for all quiz IDs) + `dynamicParams = false` + renders the client component.
-   - `Runner.client.tsx` / `Analytics.client.tsx` / `Results.client.tsx` — existing client UI, now receives `id`/`quizId`/`attemptId` as prop rather than via `use(params)`.
-   - `src/lib/local-api/static-params.ts` — reads `carmenita.db` with better-sqlite3 at BUILD time to enumerate quiz IDs. Gracefully returns `["_"]` if the DB is missing (first-time checkout / CI without seed).
+3. **Fetch interceptor race condition resolved** — Page-level `useEffect` calls to `/api/*` fired before `StaticApiBootstrap` could install the interceptor. Three failed approaches (module-level shim, `<Script strategy="beforeInteractive">`, inline `<script dangerouslySetInnerHTML>`) before the final fix:
+   - **`scripts/inject-shim.mjs`** — post-build HTML rewriter that hoists a fetch-queueing `<script>` as the FIRST child of `<head>` in every exported HTML file. The shim intercepts `/api/*` calls and queues them as Promises. When `StaticApiBootstrap` mounts, it drains the queue through the real sql.js-backed interceptor.
+   - The inline script was removed from `layout.tsx` to prevent Next's `__next_s.push()` serialization from double-injecting it.
 
-4. **`useSearchParams` Suspense wrappers** — Static export forces client-side rendering on any page that uses `useSearchParams`; Next throws unless it's wrapped in `<Suspense>`. Fixed in `/create`, `/bank`, `/import` via a 3-line `Outer → Suspense → Inner` split.
+4. **`trailingSlash: true`** added to `next.config.ts` for static exports. GitHub Pages expects `take/index.html` for `/take/` URLs, but Next was emitting `take.html`.
 
-### Phase II — Browser-side API layer
+5. **Query-param shells for runtime quiz IDs** — `dynamicParams: false` means only the 18 shipped quiz IDs have pre-rendered pages. Runtime-created quizzes (from `/take` or bank assembly) get new UUIDs that can't match any static path. Fixed by creating query-param entry points:
+   - `src/app/quiz/page.tsx` + `QueryShell.tsx` — reads `?id=`
+   - `src/app/quiz/results/page.tsx` + `ResultsQueryShell.tsx` — reads `?quizId=&attemptId=`
+   - `src/app/quiz/analytics/page.tsx` + `AnalyticsQueryShell.tsx` — reads `?id=`
+   - All 10+ navigation call sites updated from `/quiz/${id}` to `/quiz?id=${id}` (and similar for results/analytics).
 
-5. **`src/lib/local-api/db.ts`** — sql.js bootstrap. On first call, fetches `${basePath}/sql-wasm.wasm`, loads the Database, and prefers a saved copy from IndexedDB (key `carmenita.db.blob`) over the shipped seed DB. 30-line hand-rolled IDB wrapper (no deps). Exports `initLocalDb()`, `flushLocalDb()` (serialize + persist), `queryAll`/`queryOne`/`run` — a small Drizzle-free query API.
+6. **CI workflow finalized** — `.github/workflows/deploy-pages.yml` uses `npm install --no-audit` (not `npm ci`), `PAGES_BASE_PATH=/carmenita`, and the full build-static + inject-shim pipeline. Deploys in ~30s build + ~8s deploy.
 
-6. **`src/lib/local-api/handlers.ts`** — Browser re-implementations of the HTTP routes needed to browse, take, and review quizzes:
-   - `listQuizzes` (GET /api/quizzes)
-   - `getQuiz`, `softDeleteQuiz` (GET/DELETE /api/quizzes/[id])
-   - `listAttempts`, `createAttempt`, `getAttempt`, `submitAttempt` (GET/POST /api/attempts, GET/PATCH /api/attempts/[id])
-   - `getTaxonomy`, `listBankQuestions` (GET /api/bank/taxonomy, /api/bank/questions)
-   - `updateQuestion` (PATCH /api/bank/questions/[id] — notes only)
-   - `quickQuiz` (POST /api/bank/quick-quiz — candidateIds mode only)
-   - `listTrash`, `restoreTrash`, `permanentDeleteTrash` (trash CRUD)
-   Every mutation calls `flushLocalDb()` so attempts, notes, and new quizzes persist across reloads. Scoring still happens server-side style: the `scoreAnswer` helper recomputes `isCorrect` from the stored `correct_answer` — client's claim is ignored.
+### Phase V — Import/export in static build
 
-7. **`src/lib/local-api/interceptor.ts`** — Monkey-patches `window.fetch` so any URL matching `/api/*` (after stripping `basePath`) is routed to the handlers. Everything else (HTML, `_next/static/*`, fonts) falls through to the real fetch. Returns a proper `Response` with the right status + JSON body. Unhandled endpoints get a 404 "not implemented in static build" — so the UI shows a real error, not a silent hang.
+7. **`src/lib/local-api/handlers.ts`** — added `importBank()` and `exportBank()`:
+   - `importBank` validates format, calls the matching parser (`parseGift`/`parseAiken`/`parseMarkdown`), inserts all questions into sql.js with a BEGIN/COMMIT transaction, flushes to IndexedDB. Returns `{imported, warnings, ids}`.
+   - `exportBank` applies the same filter params as `listBankQuestions`, maps DB rows to `PortableQuestion[]`, calls the matching serializer. Returns a discriminated union: either `{status, body}` on error or `{__download: true, text, filename, ...}` on success.
 
-8. **`src/components/StaticApiBootstrap.tsx`** — Client component mounted in `src/app/layout.tsx`. When `process.env.NEXT_PUBLIC_STATIC_BUILD === "1"`, dynamically imports the interceptor + initializes the local DB on mount. Returns `null` in normal builds (zero cost). Shows a red error banner if the DB fails to load (IDB blocked, WASM disabled, etc.).
+8. **`src/lib/local-api/interceptor.ts`** — added `download()` response helper (text/plain with Content-Disposition headers) + two route entries: `POST /api/bank/import` and `GET /api/bank/export`.
 
-### Phase III — CI / deploy plumbing
+### Phase VI — Password gate (disabled, ready to activate)
 
-9. **`.github/workflows/deploy-pages.yml`** — `actions/checkout → setup-node@22 → npm install --no-audit → scripts/build-static.sh (with PAGES_BASE_PATH=/carmenita) → upload-pages-artifact → deploy-pages`. Uses `npm install` (not `npm ci`) because the macOS-generated lockfile trips EBADPLATFORM on npm ci's strict platform validation. Concurrency group `pages` with `cancel-in-progress: false` mirrors GitHub's official starter.
+9. **`src/lib/password-gate.ts`** — `PASSWORD_HASH = ""` (disabled). SHA-256 via WebCrypto, localStorage unlock marker keyed to the current hash (rotating the password auto-invalidates prior unlocks).
 
-10. **package-lock.json regenerated from scratch** (`rm -rf node_modules package-lock.json && npm install`) so all cross-platform esbuild binaries are in the tree.
+10. **`src/components/PasswordGate.tsx`** — lock-screen UI using `useSyncExternalStore` (no hydration warnings, no `setState-in-effect` lint). Wraps entire app in `layout.tsx`. When `PASSWORD_HASH` is empty, it's a zero-cost pass-through.
 
-11. **`.gitignore`** — added `public/carmenita.db`, `public/sql-wasm.wasm`, and `.build-stash/` (all derived artifacts written by the build script).
+11. **`scripts/hash-password.mjs`** — `node scripts/hash-password.mjs <password>` prints the SHA-256 hex to paste into `password-gate.ts`.
 
 ## Current state
 
-- **Normal `npm run dev`**: unchanged. Typecheck clean, all 284 tests passing, lint clean.
-- **Static build locally**: `./scripts/build-static.sh` succeeds — 66 static pages generated (including 18 quizzes × 3 dynamic routes = 54 SSG pages). Output is 9.2 MB in `out/`.
-- **GitHub Actions**: Last run (`gh run 24159705239`) — **build job succeeds** (51s, artifact uploaded), **deploy job fails** with "Ensure GitHub Pages has been enabled".
-- **Blocker**: `gh api -X POST repos/mohsaqr/carmenita/pages` returns **422: "Your current plan does not support GitHub Pages for this repository"**. The repo is PRIVATE on a Free GitHub plan, and Free doesn't allow Pages from private repos.
+- **Live at `https://saqr.me/carmenita/`** — last verified working at commit `8f0228f`. User was still smoke-testing; full confirmation pending.
+- Normal `npm run dev`: unchanged, all checks clean.
+- Static build: `./scripts/build-static.sh` succeeds locally. CI deploys automatically on push to main.
 
 ## Open issues
 
-- **Pages not enabled** — see blocker above. User must choose:
-  1. Make `mohsaqr/carmenita` public (simplest; Pages is free for public repos)
-  2. Upgrade to GitHub Pro ($4/mo); Pages still serves publicly
-  3. Deploy elsewhere — Cloudflare Pages, Netlify, Vercel all support private repos on free tier and can consume the same `scripts/build-static.sh` output
+- **User smoke test pending** — the `trailingSlash` + query-param shell deploy (`8f0228f`) was pushed and CI-deployed, but the user hasn't fully confirmed end-to-end (quiz take → submit → results). The last report showed the inline shim working (`drained 0 queued call(s)`) but a runtime UUID 404 — which the query-param shells should now fix.
 
-- **Runtime-created quizzes won't deep-link** — `/quiz/[id]` is only pre-rendered for the 18 IDs that existed in the shipped DB at build time (`dynamicParams = false`). A user who clicks "Start exam" on `/take` gets a new UUID, and navigating to `/quiz/<new-uuid>` returns 404 from GH Pages. Either (a) add a SPA 404.html redirect that rewrites to a known quiz ID shell with the real ID in a query param, or (b) refactor to `/quiz?id=...` query routes. Either way this is a follow-up, not a blocker for the demo.
+- **LLM-backed endpoints still not in interceptor** — `/api/generate-quiz`, `/api/generate-from-topic`, `/api/bank/questions/explain`, `/api/bank/questions/retag`, `/api/bank/variations` return 404 in static mode. `/create` page dead-ends. These could theoretically work client-side (API keys are in browser localStorage) but would need the LLM SDKs bundled for browser use.
 
-- **LLM-backed endpoints**: `/api/generate-quiz`, `/api/bank/questions/explain`, `/api/bank/questions/retag`, `/api/bank/variations*` are **not** implemented in the interceptor. `/create` and the explain/retag/variation actions will return the `"Endpoint not implemented in static build"` 404. Intentional — static deploys have no server to relay LLM calls.
+- **Analytics endpoints not in interceptor** — `/api/analytics/overview`, `/api/analytics/improvement/:id`, `/api/analytics/topics`, `/api/analytics/difficulty`, `/api/analytics/bloom` are not implemented. The analytics page and dashboard stats tiles don't work in static mode.
 
-- **Password protection on the static deploy is not possible** via `src/middleware.ts` because middleware needs a Node runtime. GH Pages has none. For password protection on a static deploy, front it with Cloudflare Access or equivalent.
+- **Repo is now public** — all source code and the shipped `carmenita.db` (1,492 genetics questions) are publicly accessible. The disabled password gate deters casual visitors but doesn't protect anything. For real protection, the user expressed interest in a Google Drive login approach (see Next steps).
+
+- **Direct URL entry to `/quiz/<unknown-uuid>/`** would still 404 — only the 18 shipped IDs are pre-rendered. The query-param route (`/quiz?id=...`) handles runtime IDs. A `404.html` SPA fallback could redirect path-based URLs to query-param equivalents.
+
+- **Uncommitted changes** — the import/export handlers + password gate files are implemented and passing all checks but NOT yet committed or pushed.
+
+## Key decisions
+
+1. **Query-param routing for runtime IDs** over SPA 404.html redirect — cleaner, no flash, and works with GitHub Pages' strict static file serving. All internal navigation uses `?id=` now.
+
+2. **Post-build HTML injection** (`inject-shim.mjs`) over React-rendered `<script>` — Next App Router's serialization (`__next_s.push`) defeats every in-tree approach. The hoist is the only way to guarantee the shim runs before any async chunk.
+
+3. **`useSyncExternalStore` for password gate** over `useState + useEffect` — avoids the `react-hooks/set-state-in-effect` lint rule while correctly handling SSR→client localStorage reads.
+
+4. **Import/export handlers reuse the same parsers/serializers** as the server routes — `parseGift`, `serializeMarkdown`, etc. are pure functions that work identically in Node and browser. No duplication.
 
 ## Next steps
 
-1. **Resolve the Pages plan blocker** (user decision — see Open issues).
-2. Once a deploy target works, do a full runtime smoke test against the live URL: home loads, `/take` filter chips update pool count, click a lecture → full quiz runs → submit → results → retake.
-3. (Nice-to-have) SPA 404.html fallback so client-generated quiz IDs deep-link correctly.
-4. (Nice-to-have) Tests for the local-api handlers — run the same SQL in a sql.js-in-node instance and assert shape parity with the real Node route handlers.
+1. **Commit + push** the current changes (import/export handlers, password gate) — user needs to approve.
+2. **Google Drive login integration** (user expressed interest, deferred to next session):
+   - OAuth2 PKCE flow (static-site compatible, no server)
+   - `drive.appdata` scope for hidden app-only storage
+   - Upload/download `carmenita.db` to user's Drive
+   - Debounced sync after mutations
+   - ~150 lines, needs a Google Cloud project + OAuth client ID
+3. **Analytics endpoints** in the interceptor — the SQL is already in `src/lib/analytics.ts`, just needs to be ported to sql.js queries.
+4. **SPA 404.html** fallback for deep-linked quiz URLs.
 
 ## Context
 
-- **Repo visibility**: PRIVATE (user wants it private + ideally password-protected; see blocker)
-- **GitHub plan**: Free (confirmed — `gh api repos/.../pages` returns 422 plan-not-supported)
-- **Deploy target requested**: GitHub Pages, with working DB (user's literal words: "with db")
+- **Repo visibility**: PUBLIC (changed this session)
+- **Deploy target**: GitHub Pages at `https://saqr.me/carmenita/`
 - **CI runner**: ubuntu-latest, Node 22
-- **build-static.sh** must be run from repo root (uses `$(cd "$(dirname "$0")/.." && pwd)`)
+- **Shipped DB**: `carmenita.db` — 14 lecture quizzes, 1,492 genetics questions
+- **Browser storage**: ~2-3 MB DB, well within IndexedDB limits (see session discussion on capacity)

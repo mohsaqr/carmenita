@@ -9,12 +9,16 @@
  * possible so bugs here are easy to cross-reference with the real
  * implementation in `src/app/api/`.
  *
- * Scope: only the endpoints required to BROWSE, TAKE, and REVIEW
- * quizzes. LLM-backed endpoints (generate-quiz, explain, retag,
+ * Scope: endpoints required to BROWSE, TAKE, REVIEW, IMPORT and
+ * EXPORT quizzes. LLM-backed endpoints (generate-quiz, explain, retag,
  * variations) are not implemented — the static deploy has no API key
  * proxy and no server to run LLM calls.
  */
 import { flushLocalDb, queryAll, queryOne, run } from "./db";
+import { parseGift, serializeGift } from "@/lib/formats/gift";
+import { parseAiken, serializeAiken } from "@/lib/formats/aiken";
+import { parseMarkdown, serializeMarkdown } from "@/lib/formats/markdown";
+import type { PortableQuestion } from "@/lib/formats/types";
 
 // ── Generic helpers ─────────────────────────────────────────────────────
 
@@ -629,4 +633,187 @@ export async function permanentDeleteTrash(id: string) {
   }
   await flushLocalDb();
   return { body: { deleted: id } };
+}
+
+// ── POST /api/bank/import ──────────────────────────────────────────────
+
+export async function importBank(body: {
+  format: string;
+  text: string;
+  sourceLabel?: string;
+}) {
+  const { format, text, sourceLabel } = body;
+  if (format !== "gift" && format !== "aiken" && format !== "markdown") {
+    return {
+      status: 400,
+      body: { error: "format must be 'gift', 'aiken', or 'markdown'" },
+    };
+  }
+  if (!text || typeof text !== "string") {
+    return { status: 400, body: { error: "text is required" } };
+  }
+
+  const result =
+    format === "gift"
+      ? parseGift(text)
+      : format === "aiken"
+        ? parseAiken(text)
+        : parseMarkdown(text);
+
+  if (result.questions.length === 0) {
+    return {
+      status: 400,
+      body: { error: "No valid questions found in the provided text.", warnings: result.warnings },
+    };
+  }
+
+  const now = nowIso();
+  const sourceType =
+    format === "gift"
+      ? "gift-import"
+      : format === "aiken"
+        ? "aiken-import"
+        : "markdown-import";
+
+  const ids: string[] = [];
+  run("BEGIN");
+  try {
+    for (const q of result.questions) {
+      const id = uuid();
+      ids.push(id);
+      run(
+        `INSERT INTO questions
+           (id, type, question, options, correct_answer, explanation,
+            difficulty, bloom_level, subject, lesson, topic, tags,
+            source_passage, source_type, source_document_id, source_label,
+            notes, parent_question_id, variation_type, created_at, user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL)`,
+        [
+          id,
+          q.type,
+          q.question,
+          JSON.stringify(q.options),
+          JSON.stringify(q.correctAnswer),
+          q.explanation,
+          q.difficulty,
+          q.bloomLevel,
+          q.subject,
+          q.lesson,
+          q.topic.trim().toLowerCase(),
+          JSON.stringify(q.tags),
+          q.sourcePassage,
+          sourceType,
+          sourceLabel ?? null,
+          now,
+        ],
+      );
+    }
+    run("COMMIT");
+  } catch (err) {
+    run("ROLLBACK");
+    throw err;
+  }
+  await flushLocalDb();
+
+  return {
+    body: { imported: ids.length, warnings: result.warnings, ids },
+  };
+}
+
+// ── GET /api/bank/export ───────────────────────────────────────────────
+
+export function exportBank(url: URL) {
+  const sp = url.searchParams;
+  const format = sp.get("format");
+  if (format !== "gift" && format !== "aiken" && format !== "markdown") {
+    return {
+      status: 400,
+      body: { error: "format must be 'gift', 'aiken', or 'markdown'" },
+    };
+  }
+
+  // Build WHERE clause using the same filter pattern as listBankQuestions.
+  const where: string[] = [];
+  const params: Array<string | number | null> = [];
+  const push = (clause: string, ...p: Array<string | number | null>) => {
+    where.push(clause);
+    params.push(...p);
+  };
+  if (sp.get("topic")) push("topic = ?", sp.get("topic"));
+  if (sp.get("subject")) push("subject = ?", sp.get("subject"));
+  if (sp.get("lesson")) push("lesson = ?", sp.get("lesson"));
+  if (sp.get("difficulty")) push("difficulty = ?", sp.get("difficulty"));
+  if (sp.get("bloomLevel")) push("bloom_level = ?", sp.get("bloomLevel"));
+  if (sp.get("sourceType")) push("source_type = ?", sp.get("sourceType"));
+  if (sp.get("tag")) {
+    const t = (sp.get("tag") || "").replace(/"/g, '\\"');
+    push(`tags LIKE ?`, `%"${t}"%`);
+  }
+  const idsCsv = sp.get("ids");
+  if (idsCsv) {
+    const ids = idsCsv.split(",").map((s) => s.trim()).filter(Boolean);
+    if (ids.length > 0) {
+      where.push(`id IN (${ids.map(() => "?").join(",")})`);
+      params.push(...ids);
+    }
+  }
+
+  const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const rows = queryAll<Record<string, unknown>>(
+    `SELECT * FROM questions ${whereSql} ORDER BY created_at DESC`,
+    params,
+  );
+
+  if (rows.length === 0) {
+    return { status: 404, body: { error: "No questions match the given filters" } };
+  }
+
+  const portable: PortableQuestion[] = rows.map((r) => ({
+    type: r.type as PortableQuestion["type"],
+    question: r.question as string,
+    options: jsonParse<string[]>(r.options, []),
+    correctAnswer: jsonParse<number | number[]>(r.correct_answer, 0),
+    explanation: (r.explanation ?? "") as string,
+    difficulty: r.difficulty as PortableQuestion["difficulty"],
+    bloomLevel: r.bloom_level as PortableQuestion["bloomLevel"],
+    subject: (r.subject as string) ?? null,
+    lesson: (r.lesson as string) ?? null,
+    topic: (r.topic ?? "imported") as string,
+    tags: jsonParse<string[]>(r.tags, []),
+    sourcePassage: (r.source_passage ?? "") as string,
+  }));
+
+  const category = sp.get("topic") || undefined;
+  let text: string;
+  let skippedHeader = "0";
+  if (format === "gift") {
+    text = serializeGift(portable, { category, includeMetadataComments: true });
+  } else if (format === "markdown") {
+    text = serializeMarkdown(portable);
+  } else {
+    const result = serializeAiken(portable);
+    text = result.text;
+    if (result.skipped.length > 0) {
+      skippedHeader = result.skipped
+        .map((s: { index: number; reason: string }) => `${s.index}:${s.reason}`)
+        .join("; ");
+    }
+  }
+
+  const extension =
+    format === "gift"
+      ? "gift.txt"
+      : format === "markdown"
+        ? "md"
+        : "aiken.txt";
+
+  // Return as a special shape that the interceptor handles as a
+  // text/plain download rather than wrapping in JSON.
+  return {
+    __download: true as const,
+    text,
+    filename: `carmenita-bank.${extension}`,
+    skipped: skippedHeader,
+    exported: rows.length,
+  };
 }

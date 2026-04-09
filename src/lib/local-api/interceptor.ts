@@ -15,9 +15,11 @@
 import { initLocalDb } from "./db";
 import {
   createAttempt,
+  exportBank,
   getAttempt,
   getQuiz,
   getTaxonomy,
+  importBank,
   listAttempts,
   listBankQuestions,
   listQuizzes,
@@ -58,6 +60,23 @@ function methodNotAllowed(path: string, method: string): Response {
     }),
     { status: 405, headers: { "Content-Type": "application/json" } },
   );
+}
+
+function download(result: {
+  text: string;
+  filename: string;
+  skipped: string;
+  exported: number;
+}): Response {
+  return new Response(result.text, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${result.filename}"`,
+      "X-Carmenita-Skipped": result.skipped,
+      "X-Carmenita-Exported-Count": String(result.exported),
+    },
+  });
 }
 
 async function parseJson(req: Request): Promise<unknown> {
@@ -166,6 +185,31 @@ async function route(req: Request): Promise<Response | null> {
         shuffle?: boolean;
       };
       return json(await quickQuiz(body));
+    }
+    return methodNotAllowed(pathname, method);
+  }
+
+  // /api/bank/import
+  if (segs[0] === "bank" && segs[1] === "import" && segs.length === 2) {
+    if (method === "POST") {
+      const body = (await parseJson(req)) as {
+        format: string;
+        text: string;
+        sourceLabel?: string;
+      };
+      return json(await importBank(body));
+    }
+    return methodNotAllowed(pathname, method);
+  }
+
+  // /api/bank/export
+  if (segs[0] === "bank" && segs[1] === "export" && segs.length === 2) {
+    if (method === "GET") {
+      const result = exportBank(url);
+      if ("__download" in result && result.__download) {
+        return download(result as { text: string; filename: string; skipped: string; exported: number });
+      }
+      return json(result as HandlerResult);
     }
     return methodNotAllowed(pathname, method);
   }

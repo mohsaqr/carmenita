@@ -2,7 +2,25 @@
 
 Pitfalls, data quirks, and non-obvious discoveries from building Carmenita. Read this before starting a new task — each entry cost real debugging time to figure out the first time.
 
-### 2026-04-09 (GitHub Pages static build session)
+### 2026-04-09 (GitHub Pages deploy completion + import/export interceptor)
+
+- **sql.js browser entry requests `sql-wasm-browser.wasm`, NOT `sql-wasm.wasm`**: the default import path for sql.js in browsers resolves to a build that calls `locateFile("sql-wasm-browser.wasm")`. The Node-only build uses `sql-wasm.wasm`. For a static deploy that loads sql.js in the browser, you must copy BOTH files into `public/`. Missing the browser variant gives "both async and sync fetching of the wasm failed" with no helpful error about which file was missing.
+
+- **Next App Router `<Script strategy="beforeInteractive">` serializes to `self.__next_s.push()`**: This re-inserts the script AFTER hydration, not before. In practice it runs after all async chunks have loaded, defeating the purpose of "before interactive". For code that truly must run before any JS chunk executes, the only reliable approach is a post-build HTML rewriter that hoists a `<script>` tag to be the first child of `<head>`. Same for `<script dangerouslySetInnerHTML>` in a Server Component — Next serializes it at position ~15 in the `<head>`, after all `<link>` and async chunk tags.
+
+- **`trailingSlash: true` is required for GitHub Pages static exports**: Without it, Next emits `take.html` (flat file), but GitHub Pages serves `/take/` URLs by looking for `take/index.html`. The 301 redirect from `/take` → `/take/` works, but then Pages returns 404 because `take/index.html` doesn't exist. With `trailingSlash: true`, Next emits `take/index.html` instead.
+
+- **Runtime-created UUIDs can't use dynamic path segments in `output: "export"`**: `dynamicParams: false` means only IDs known at build time get pages. New quiz UUIDs created at runtime (from `/take` or bank assembly) have no matching static file. The fix is query-param routing: `/quiz?id=<uuid>` hits a single static `quiz/index.html` page that reads `useSearchParams()` at runtime. This is a fundamental static-export constraint, not a bug.
+
+- **Post-build HTML injection must strip before re-injecting**: The `inject-shim.mjs` script uses a regex to remove any existing shim (`/<script id="carmenita-fetch-shim">[\s\S]*?<\/script>/g`) before inserting the new one. Without the strip, running the build twice (or the shim being present from a previous run) results in duplicate shims that fight each other.
+
+- **`useSyncExternalStore` is the lint-clean way to read browser-only storage during render**: The `react-hooks/set-state-in-effect` rule flags `setUnlocked(isUnlocked())` inside a `useEffect`, but `useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)` handles the SSR→client transition natively — React specifically allows snapshot mismatches for this hook without hydration warnings. Use a module-level `Set<() => void>` to notify the same-tab component when the store changes (the native `storage` event only fires in OTHER tabs).
+
+- **Password hash rotation auto-invalidates unlocks for free**: Storing the current `PASSWORD_HASH` (not a boolean) as the localStorage unlock marker means changing the hash constant instantly invalidates all existing unlocks — the stored marker no longer matches. No version counter or cache-busting needed.
+
+- **Format parsers are pure functions that work identically in Node and browser**: `parseGift()`, `parseMarkdown()`, `serializeAiken()`, etc. have zero runtime dependencies beyond standard JS. They can be imported directly into the browser-side fetch interceptor without any adaptation. This was the original design intent — the parsers were built to be LLM-free and environment-agnostic.
+
+### 2026-04-09 (GitHub Pages static build session — infrastructure)
 
 - **`output: "export"` is allergic to dynamic server routes**: Next 16's static export mode aborts if `src/app/api/` contains any route handler, even one that's never called by the exported pages. The trick (borrowed from handai) is to physically move `src/app/api/` out of the tree during the build via a shell script's EXIT trap. `scripts/build-static.sh` implements this. Same goes for `src/middleware.ts` — it references `NextRequest` which the static export can't resolve.
 

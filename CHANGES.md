@@ -2,7 +2,28 @@
 
 Human-readable changelog independent of git. Newest entries at top.
 
-### 2026-04-09 — GitHub Pages static deploy + sql.js fetch interceptor
+### 2026-04-09 — GitHub Pages deploy live + import/export in static build + password gate
+
+Completes the GitHub Pages deployment (repo made public, all runtime bugs fixed, live at `https://saqr.me/carmenita/`). Adds GIFT/Aiken/Markdown import and export to the browser-side fetch interceptor so the static deploy can import questions without a server. Adds a disabled password gate ready to activate.
+
+- `scripts/inject-shim.mjs`: NEW. Post-build HTML rewriter that hoists a fetch-queueing inline `<script>` to be the first child of `<head>` in every exported HTML file. Solves the race condition where page-level useEffects call `/api/*` before the sql.js interceptor has mounted. The shim queues calls as Promises; StaticApiBootstrap drains them when the real interceptor installs.
+- `scripts/build-static.sh`: now copies BOTH `sql-wasm.wasm` AND `sql-wasm-browser.wasm` (sql.js browser entry requests the latter). Calls `inject-shim.mjs` after `next build`.
+- `next.config.ts`: added `trailingSlash: true` in static export mode (GitHub Pages needs `dir/index.html`, not `dir.html`).
+- `src/app/quiz/page.tsx` + `QueryShell.tsx`: NEW. Query-param shell for runtime quiz IDs (`/quiz?id=<uuid>`).
+- `src/app/quiz/results/page.tsx` + `ResultsQueryShell.tsx`: NEW. Query-param shell for results (`/quiz/results?quizId=&attemptId=`).
+- `src/app/quiz/analytics/page.tsx` + `AnalyticsQueryShell.tsx`: NEW. Query-param shell for analytics (`/quiz/analytics?id=`).
+- 10+ navigation call sites updated from path-based `/quiz/${id}` to query-param `/quiz?id=${id}` (create, import, bank, take, dashboard, attempts, results, analytics).
+- `src/app/layout.tsx`: removed inline `<script>` (now injected by inject-shim.mjs post-build to avoid Next's `__next_s.push` double-injection). Added `<PasswordGate>` wrapper.
+- `src/components/StaticApiBootstrap.tsx`: removed module-level shim code (replaced by inject-shim.mjs).
+- `src/lib/local-api/handlers.ts`: added `importBank()` (parse + batch INSERT + flush) and `exportBank()` (filter + serialize + download response). Imports `parseGift`, `parseAiken`, `parseMarkdown`, `serializeGift`, `serializeAiken`, `serializeMarkdown` directly — pure functions, work in browser.
+- `src/lib/local-api/interceptor.ts`: added `download()` response helper for text/plain exports with Content-Disposition headers. Two new route entries: `POST /api/bank/import`, `GET /api/bank/export`.
+- `src/lib/password-gate.ts`: NEW. `PASSWORD_HASH = ""` (disabled). SHA-256 via WebCrypto, localStorage unlock marker keyed to current hash. `verifyPassword()`, `isUnlocked()`, `markUnlocked()`, `clearUnlock()`.
+- `src/components/PasswordGate.tsx`: NEW. Lock-screen component using `useSyncExternalStore` for lint-clean SSR→client localStorage reads. Module-level listener Set for same-tab notification on unlock. Zero-cost pass-through when `PASSWORD_HASH` is empty.
+- `scripts/hash-password.mjs`: NEW. `node scripts/hash-password.mjs <password>` prints SHA-256 hex.
+- `.github/workflows/deploy-pages.yml`: uses `npm install --no-audit` (not `npm ci`), `PAGES_BASE_PATH=/carmenita`.
+- Tests: 284/284 passing. 0 TS errors, 0 lint warnings.
+
+### 2026-04-09 — GitHub Pages static deploy infrastructure (Phase I-III)
 
 Stands up a fully static build target for GitHub Pages. The shipped `carmenita.db` is loaded into an in-browser sql.js instance at runtime, every `fetch('/api/*')` is intercepted and served from there, and mutations (attempts, notes, new quizzes) are flushed to IndexedDB so per-browser progress persists. The normal Node build path is untouched.
 
