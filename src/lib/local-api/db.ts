@@ -16,6 +16,8 @@
  * deliberately small persistence layer for a single-user demo deploy.
  */
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
+import { getAuthState } from "@/lib/google-auth";
+import { scheduleDriveSync } from "@/lib/google-drive";
 
 const IDB_NAME = "carmenita-local";
 const IDB_STORE = "blobs";
@@ -110,6 +112,9 @@ export function initLocalDb(): Promise<Database> {
 /**
  * Serialize the current in-memory DB and write it to IndexedDB. Call
  * after every mutation so user progress survives page reloads.
+ *
+ * If the user is signed into Google, also schedules a debounced upload
+ * to Drive's appDataFolder (5s after the last mutation).
  */
 export async function flushLocalDb(): Promise<void> {
   if (!db) return;
@@ -120,6 +125,17 @@ export async function flushLocalDb(): Promise<void> {
     // Storage full or broken IDB — silent: the session still works,
     // only persistence is lost. We can't tell the user here because
     // this runs from the fetch interceptor.
+  }
+
+  // Schedule Drive sync if authenticated — reuse the already-exported buf
+  // so the sync timer doesn't call db.export() a second time
+  if (getAuthState()) {
+    let cached: Uint8Array | null = buf;
+    scheduleDriveSync(() => {
+      const b = cached;
+      cached = null; // allow GC after upload
+      return b;
+    });
   }
 }
 

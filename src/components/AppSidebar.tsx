@@ -15,6 +15,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 
 const NAV_LINKS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -60,7 +61,7 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex flex-col gap-1 p-3">
+      <nav className="flex flex-1 flex-col gap-1 p-3">
         {NAV_LINKS.map((link) => {
           const active =
             link.href === "/"
@@ -85,6 +86,11 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
           );
         })}
       </nav>
+
+      {/* Google account — pinned to bottom */}
+      <div className="border-t p-3">
+        <GoogleAuthButton />
+      </div>
     </>
   );
 
