@@ -495,7 +495,7 @@ export default function TakeQuizPage() {
           Row 2: Difficulty quick-chips, Shuffle, From/Count/All, Start exam
           This keeps all the primary controls above the fold and away
           from the sidebar. */}
-      <div className="sticky top-0 z-10 -mx-4 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+      <div className="sticky top-14 z-10 -mx-4 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         <div className="mx-auto max-w-6xl space-y-2">
           {/* Row 1: pool count + active filters + reset */}
           <div className="flex flex-wrap items-center gap-3">

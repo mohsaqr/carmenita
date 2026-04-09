@@ -3,7 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AppHeader } from "@/components/AppHeader";
+import { LayoutShell } from "@/components/LayoutShell";
 import { PasswordGate } from "@/components/PasswordGate";
 import { StaticApiBootstrap } from "@/components/StaticApiBootstrap";
 
@@ -49,12 +49,9 @@ export default function RootLayout({
         <PasswordGate>
           <StaticApiBootstrap />
           <TooltipProvider>
-            <div className="flex min-h-screen w-full flex-col">
-              <AppHeader />
-              <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6">
-                {children}
-              </main>
-            </div>
+            <LayoutShell>
+              {children}
+            </LayoutShell>
             <Toaster />
           </TooltipProvider>
         </PasswordGate>
