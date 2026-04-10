@@ -576,6 +576,45 @@ export async function quickQuiz(body: {
   };
 }
 
+// ── /api/analytics/needs-review ────────────────────────────────────────
+
+export function needsReview(limit = 50) {
+  const rows = queryAll<{
+    id: string;
+    question: string;
+    topic: string;
+    difficulty: string;
+    answered: number;
+    wrong: number;
+    rate: number;
+  }>(
+    `SELECT
+       q.id, q.question, q.topic, q.difficulty,
+       COUNT(*) AS answered,
+       SUM(CASE WHEN a.is_correct THEN 0 ELSE 1 END) AS wrong,
+       AVG(CASE WHEN a.is_correct THEN 1.0 ELSE 0 END) AS rate
+     FROM answers a
+     JOIN questions q  ON q.id  = a.question_id
+     JOIN attempts  at ON at.id = a.attempt_id
+     WHERE at.completed_at IS NOT NULL
+     GROUP BY q.id
+     HAVING wrong > 0
+     ORDER BY rate ASC, wrong DESC
+     LIMIT ?`,
+    [limit],
+  );
+
+  return rows.map((r) => ({
+    questionId: r.id,
+    question: r.question,
+    topic: r.topic,
+    difficulty: r.difficulty,
+    answered: r.answered,
+    wrong: r.wrong,
+    rate: r.rate,
+  }));
+}
+
 // ── /api/trash ──────────────────────────────────────────────────────────
 
 export function listTrash() {

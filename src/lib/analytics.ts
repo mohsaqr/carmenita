@@ -240,3 +240,58 @@ export async function overview(): Promise<Overview> {
     avgScore: row?.avg_score ?? null,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Needs review — questions the user has gotten wrong at least once.
+// Ranked by accuracy rate (worst first), then by number of wrong answers.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface NeedsReviewQuestion {
+  questionId: string;
+  question: string;
+  topic: string;
+  difficulty: string;
+  answered: number;
+  wrong: number;
+  rate: number;
+}
+
+export async function needsReview(
+  limit = 50,
+): Promise<NeedsReviewQuestion[]> {
+  const rows = db.all<{
+    id: string;
+    question: string;
+    topic: string;
+    difficulty: string;
+    answered: number;
+    wrong: number;
+    rate: number;
+  }>(sql`
+    SELECT
+      q.id,
+      q.question,
+      q.topic,
+      q.difficulty,
+      COUNT(*) AS answered,
+      SUM(CASE WHEN a.is_correct THEN 0 ELSE 1 END) AS wrong,
+      AVG(CASE WHEN a.is_correct THEN 1.0 ELSE 0 END) AS rate
+    FROM answers a
+    JOIN questions q  ON q.id  = a.question_id
+    JOIN attempts  at ON at.id = a.attempt_id
+    WHERE at.completed_at IS NOT NULL
+    GROUP BY q.id
+    HAVING wrong > 0
+    ORDER BY rate ASC, wrong DESC
+    LIMIT ${limit}
+  `);
+
+  return rows.map((r) => ({
+    questionId: r.id,
+    question: r.question,
+    topic: r.topic,
+    difficulty: r.difficulty,
+    answered: r.answered,
+    wrong: r.wrong,
+    rate: r.rate,
+  }));
+}

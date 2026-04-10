@@ -24,6 +24,7 @@ import {
   listBankQuestions,
   listQuizzes,
   listTrash,
+  needsReview,
   permanentDeleteTrash,
   quickQuiz,
   restoreTrash,
@@ -210,6 +211,16 @@ async function route(req: Request): Promise<Response | null> {
         return download(result as { text: string; filename: string; skipped: string; exported: number });
       }
       return json(result as HandlerResult);
+    }
+    return methodNotAllowed(pathname, method);
+  }
+
+  // /api/analytics/needs-review
+  if (segs[0] === "analytics" && segs[1] === "needs-review" && segs.length === 2) {
+    if (method === "GET") {
+      const limitParam = url.searchParams.get("limit");
+      const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 50, 200) : 50;
+      return json({ body: { questions: needsReview(limit) } });
     }
     return methodNotAllowed(pathname, method);
   }

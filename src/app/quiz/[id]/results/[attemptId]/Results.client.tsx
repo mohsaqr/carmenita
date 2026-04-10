@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Check, X, Loader2 } from "lucide-react";
+import { Check, X, Loader2, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { Attempt, Question, Answer } from "@/types";
 
@@ -29,8 +31,10 @@ export default function Results({
   quizId: string;
   attemptId: string;
 }) {
+  const router = useRouter();
   const [data, setData] = useState<AttemptData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retakeWrongBusy, setRetakeWrongBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,6 +78,34 @@ export default function Results({
   const correctCount = questions.filter((q) => q.answer?.isCorrect).length;
   const total = questions.length;
   const pct = total > 0 ? (correctCount / total) * 100 : 0;
+  const wrongIds = questions
+    .filter((q) => !q.answer?.isCorrect)
+    .map((q) => q.id);
+
+  async function handleRetakeWrong() {
+    if (wrongIds.length === 0) return;
+    setRetakeWrongBusy(true);
+    try {
+      const res = await fetch("/api/bank/quick-quiz", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Review wrong answers — ${new Date().toLocaleString()}`,
+          count: wrongIds.length,
+          candidateIds: wrongIds,
+          immediateFeedback: true,
+          shuffle: true,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `Failed (${res.status})`);
+      toast.success(`Quiz created with ${body.questionCount} questions to review`);
+      router.push(`/quiz?id=${body.quizId}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create review quiz");
+      setRetakeWrongBusy(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -87,10 +119,24 @@ export default function Results({
         </div>
       </header>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Link href={`/quiz?id=${quizId}`}>
           <Button>Retake quiz</Button>
         </Link>
+        {wrongIds.length > 0 && wrongIds.length < total && (
+          <Button
+            variant="secondary"
+            onClick={handleRetakeWrong}
+            disabled={retakeWrongBusy}
+          >
+            {retakeWrongBusy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RotateCcw className="h-4 w-4" />
+            )}
+            Retake {wrongIds.length} wrong
+          </Button>
+        )}
         <Link href={`/quiz/analytics?id=${quizId}`}>
           <Button variant="outline">View improvement over time</Button>
         </Link>
