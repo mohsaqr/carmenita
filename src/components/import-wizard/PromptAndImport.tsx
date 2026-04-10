@@ -18,6 +18,7 @@ import type { MetadataValues } from "./MetadataForm";
 interface PromptAndImportProps {
   format: ChatbotPromptFormat;
   metadata: MetadataValues;
+  onMetadataChange: (patch: Partial<MetadataValues>) => void;
   importText: string;
   importSourceLabel: string;
   onImportTextChange: (text: string) => void;
@@ -28,6 +29,7 @@ interface PromptAndImportProps {
 export function PromptAndImport({
   format,
   metadata,
+  onMetadataChange,
   importText,
   importSourceLabel,
   onImportTextChange,
@@ -36,6 +38,7 @@ export function PromptAndImport({
 }: PromptAndImportProps) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [showHowTo, setShowHowTo] = useState(false);
 
@@ -107,7 +110,7 @@ export function PromptAndImport({
 
   return (
     <div className="space-y-4">
-      {/* ── Prompt: copy button always visible, body collapsed ── */}
+      {/* ── Prompt section: metadata + copy + collapsible preview ── */}
       <div className="rounded-lg border bg-card p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold">1. Copy this prompt to your chatbot</h3>
@@ -137,6 +140,73 @@ export function PromptAndImport({
             </Button>
           </div>
         </div>
+
+        {/* Customize prompt details — collapsed */}
+        <button
+          type="button"
+          onClick={() => setShowDetails((v) => !v)}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronDown
+            className={`h-3.5 w-3.5 transition-transform ${showDetails ? "rotate-180" : ""}`}
+          />
+          Customize prompt (topic, source material, number of questions)
+        </button>
+        {showDetails && (
+          <div className="space-y-3 pt-1">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="wiz-n">Questions</Label>
+                <Input
+                  id="wiz-n"
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={metadata.n}
+                  onChange={(e) => onMetadataChange({ n: parseInt(e.target.value, 10) || 10 })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="wiz-subject">Subject</Label>
+                <Input
+                  id="wiz-subject"
+                  value={metadata.subject}
+                  onChange={(e) => onMetadataChange({ subject: e.target.value })}
+                  placeholder="biology"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="wiz-lesson">Lesson</Label>
+                <Input
+                  id="wiz-lesson"
+                  value={metadata.lesson}
+                  onChange={(e) => onMetadataChange({ lesson: e.target.value })}
+                  placeholder="photosynthesis"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="wiz-topic">Topic</Label>
+                <Input
+                  id="wiz-topic"
+                  value={metadata.topic}
+                  onChange={(e) => onMetadataChange({ topic: e.target.value })}
+                  placeholder="light reactions"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="wiz-source">Source material (optional)</Label>
+              <Textarea
+                id="wiz-source"
+                value={metadata.source}
+                onChange={(e) => onMetadataChange({ source: e.target.value })}
+                rows={3}
+                placeholder="Paste your notes, textbook excerpt, or article here."
+                className="font-mono text-xs"
+              />
+            </div>
+          </div>
+        )}
 
         {showPrompt && (
           <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed">

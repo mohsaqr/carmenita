@@ -8,13 +8,13 @@ import type { ChatbotPromptFormat } from "@/lib/formats/chatbot-prompts";
 import type { ImportResult } from "@/components/ImportCard";
 import { StepIndicator } from "./StepIndicator";
 import { FormatPicker } from "./FormatPicker";
-import { MetadataForm, type MetadataValues } from "./MetadataForm";
+import type { MetadataValues } from "./MetadataForm";
 import { PromptAndImport } from "./PromptAndImport";
 import { PostImportActions } from "./PostImportActions";
 
-const STEPS = ["Format", "Details", "Generate & Import", "What next?"];
+const STEPS = ["Format", "Generate & Import", "What next?"];
 
-type Step = 0 | 1 | 2 | 3;
+type Step = 0 | 1 | 2;
 
 export function ImportWizard() {
   const [step, setStep] = useState<Step>(0);
@@ -35,17 +35,13 @@ export function ImportWizard() {
     setStep(1);
   }
 
-  function handleMetadataContinue() {
-    setStep(2);
-  }
-
   function handleImported(result: ImportResult) {
     if (result.count === 0) {
       toast.error("No questions were imported — check the format and try again.");
       return;
     }
     setImportResult(result);
-    setStep(3);
+    setStep(2);
   }
 
   function handleImportMore() {
@@ -53,7 +49,6 @@ export function ImportWizard() {
     setImportText("");
     setImportSourceLabel("");
     setStep(0);
-    // metadata is intentionally preserved so users don't re-type
   }
 
   function handleBack() {
@@ -72,26 +67,10 @@ export function ImportWizard() {
 
       {step === 1 && format && (
         <>
-          <MetadataForm
-            format={format}
-            metadata={metadata}
-            onChange={(patch) => setMetadata((m) => ({ ...m, ...patch }))}
-          />
-          <div className="flex justify-between">
-            <Button variant="outline" onClick={handleBack}>
-              <ArrowLeft className="h-4 w-4" />
-              Back
-            </Button>
-            <Button onClick={handleMetadataContinue}>Continue to prompt</Button>
-          </div>
-        </>
-      )}
-
-      {step === 2 && format && (
-        <>
           <PromptAndImport
             format={format}
             metadata={metadata}
+            onMetadataChange={(patch) => setMetadata((m) => ({ ...m, ...patch }))}
             importText={importText}
             importSourceLabel={importSourceLabel}
             onImportTextChange={setImportText}
@@ -107,7 +86,7 @@ export function ImportWizard() {
         </>
       )}
 
-      {step === 3 && importResult && (
+      {step === 2 && importResult && (
         <PostImportActions imported={importResult} onImportMore={handleImportMore} />
       )}
     </div>
