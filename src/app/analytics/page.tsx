@@ -184,7 +184,7 @@ export default function AnalyticsPage() {
       )}
 
       {needsReview.length > 0 && (
-        <Card>
+        <Card id="needs-review">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <div>

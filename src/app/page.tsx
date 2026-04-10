@@ -1,85 +1,76 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sparkles, BookOpen, BarChart3, Upload } from "lucide-react";
+import { BookOpen, RotateCcw, Brain, BarChart3 } from "lucide-react";
 import { DashboardLists } from "@/components/DashboardLists";
 
 export default function HomePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-8">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Carmenita</h1>
-        <p className="text-muted-foreground">
-          Turn documents, topics, lectures, or imported MCQs into multiple-choice quizzes.
-          Study, retake, track improvement.
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <p className="text-sm text-muted-foreground">
+          Study, retake, review, and track your progress.
         </p>
       </header>
 
-      {/*
-        Action grid. On mobile it's a single column, on md it's 2x2, and
-        on lg it flattens into one row of four. The "Take an exam" card
-        embeds ExamPickerCard directly so the user can start a quiz
-        without navigating away — this replaces the old dead "Take
-        Quizzes" card that pointed at a scroll anchor.
-      */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader>
-            <Sparkles className="h-6 w-6 text-muted-foreground" />
-            <CardTitle>Create questions</CardTitle>
-            <CardDescription>
-              Generate from a document, a typed topic, a PPTX lecture, or import existing MCQs.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/create">
-              <Button className="w-full">Start a new quiz</Button>
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <BookOpen className="h-6 w-6 text-muted-foreground" />
-            <CardTitle>Take a quiz</CardTitle>
-            <CardDescription>
-              Filter your bank by subject, topic, tag, difficulty or Bloom
-              level and start a focused exam.
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card className="border-primary/40">
+          <CardHeader className="pb-3">
+            <BookOpen className="h-5 w-5 text-primary" />
+            <CardTitle className="text-base">Take a quiz</CardTitle>
+            <CardDescription className="text-xs">
+              Start a focused exam from your question bank.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Link href="/take">
-              <Button className="w-full">Open take-quiz page</Button>
+              <Button className="w-full" size="sm">Start</Button>
             </Link>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <Upload className="h-6 w-6 text-muted-foreground" />
-            <CardTitle>Import MCQs</CardTitle>
-            <CardDescription>
-              Paste or upload GIFT / Aiken / Markdown MCQ files — or a PDF with existing questions.
+          <CardHeader className="pb-3">
+            <RotateCcw className="h-5 w-5 text-muted-foreground" />
+            <CardTitle className="text-base">Repeat quizzes</CardTitle>
+            <CardDescription className="text-xs">
+              Retake past quizzes to improve your score.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/import">
-              <Button variant="outline" className="w-full">Import questions</Button>
+            <Link href="/attempts">
+              <Button variant="outline" className="w-full" size="sm">View attempts</Button>
             </Link>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <BarChart3 className="h-6 w-6 text-muted-foreground" />
-            <CardTitle>Track performance</CardTitle>
-            <CardDescription>
-              Per-topic, per-difficulty, per-Bloom-level analytics across trials.
+          <CardHeader className="pb-3">
+            <Brain className="h-5 w-5 text-muted-foreground" />
+            <CardTitle className="text-base">Revise</CardTitle>
+            <CardDescription className="text-xs">
+              Practice questions you&apos;ve gotten wrong.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/analytics#needs-review">
+              <Button variant="outline" className="w-full" size="sm">Needs review</Button>
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <BarChart3 className="h-5 w-5 text-muted-foreground" />
+            <CardTitle className="text-base">Track progress</CardTitle>
+            <CardDescription className="text-xs">
+              Per-topic, difficulty, and Bloom-level analytics.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Link href="/analytics">
-              <Button variant="outline" className="w-full">View analytics</Button>
+              <Button variant="outline" className="w-full" size="sm">Analytics</Button>
             </Link>
           </CardContent>
         </Card>
