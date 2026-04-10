@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const now = new Date().toISOString();
+  const baseTime = Date.now();
   const sourceType: QuestionSource =
     format === "gift"
       ? "gift-import"
@@ -60,7 +60,11 @@ export async function POST(req: NextRequest) {
         ? "aiken-import"
         : "markdown-import";
 
-  const rows = parsedQuestions.map((q) => ({
+  // Each question gets a createdAt offset by 1ms so that the bank's
+  // default ORDER BY created_at DESC preserves file order: Q1 first
+  // (highest timestamp), Q2 second, etc.
+  const total = parsedQuestions.length;
+  const rows = parsedQuestions.map((q, i) => ({
     id: randomUUID(),
     type: q.type,
     question: q.question,
@@ -78,7 +82,7 @@ export async function POST(req: NextRequest) {
     sourceType,
     sourceDocumentId: null,
     sourceLabel: sourceLabel ?? null,
-    createdAt: now,
+    createdAt: new Date(baseTime + (total - 1 - i)).toISOString(),
     userId: null,
   }));
 

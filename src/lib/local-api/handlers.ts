@@ -795,7 +795,8 @@ export async function importBank(body: {
     };
   }
 
-  const now = nowIso();
+  const baseTime = Date.now();
+  const total = result.questions.length;
   const sourceType =
     format === "gift"
       ? "gift-import"
@@ -806,9 +807,11 @@ export async function importBank(body: {
   const ids: string[] = [];
   run("BEGIN");
   try {
-    for (const q of result.questions) {
+    result.questions.forEach((q, i) => {
       const id = uuid();
       ids.push(id);
+      // Offset createdAt by 1ms per question so DESC order = file order
+      const createdAt = new Date(baseTime + (total - 1 - i)).toISOString();
       run(
         `INSERT INTO questions
            (id, type, question, options, correct_answer, explanation,
@@ -832,10 +835,10 @@ export async function importBank(body: {
           q.sourcePassage,
           sourceType,
           sourceLabel ?? null,
-          now,
+          createdAt,
         ],
       );
-    }
+    });
     run("COMMIT");
   } catch (err) {
     run("ROLLBACK");
