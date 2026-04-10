@@ -28,11 +28,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Question } from "@/types";
-import { ChatbotPromptPanel } from "@/components/ChatbotPromptPanel";
 import { VariationDialog } from "@/components/VariationDialog";
 import { BulkTagDialog } from "@/components/BulkTagDialog";
 import { CreateQuestionDialog } from "@/components/CreateQuestionDialog";
-import { ImportCard } from "@/components/ImportCard";
 import { QuestionRow } from "@/components/QuestionRow";
 import { BankGroupedView } from "@/components/BankGroupedView";
 import { useActiveProvider } from "@/hooks/useActiveProvider";
@@ -468,10 +466,6 @@ function BankPageInner() {
           {counts.variation > 0 && <Badge variant="secondary">{counts.variation} variations</Badge>}
         </div>
       </header>
-
-      <ChatbotPromptPanel />
-
-      <ImportCard onImported={() => void reload()} />
 
       <Card>
         <CardHeader>
