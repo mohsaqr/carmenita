@@ -75,6 +75,8 @@ function BankPageInner() {
    * subject/lesson/topic accordion via BankGroupedView. Local state only —
    * intentionally not persisted; a fresh session starts flat. */
   const [viewMode, setViewMode] = useState<"flat" | "grouped">("flat");
+  type SortMode = "newest" | "oldest" | "topic" | "difficulty";
+  const [sortMode, setSortMode] = useState<SortMode>("newest");
   /** Set of expanded group keys (subject, subject|lesson, subject|lesson|topic)
    * kept at the page level so expand/collapse state survives re-renders
    * (e.g. after a bulk re-tag reloads the bank). */
@@ -138,8 +140,9 @@ function BankPageInner() {
   }, [all]);
 
   const filtered = useMemo(() => {
+    const DIFFICULTY_ORDER: Record<string, number> = { easy: 0, medium: 1, hard: 2 };
     if (!all) return [];
-    return all.filter((q) => {
+    const result = all.filter((q) => {
       if (filter.topic && !q.topic.toLowerCase().includes(filter.topic.toLowerCase())) return false;
       if (filter.subject !== "any" && q.subject !== filter.subject) return false;
       if (filter.lesson !== "any" && q.lesson !== filter.lesson) return false;
@@ -149,7 +152,20 @@ function BankPageInner() {
       if (filter.sourceType !== "any" && q.sourceType !== filter.sourceType) return false;
       return true;
     });
-  }, [all, filter]);
+    switch (sortMode) {
+      case "oldest":
+        return result.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      case "topic":
+        return result.slice().sort((a, b) => a.topic.localeCompare(b.topic));
+      case "difficulty":
+        return result.slice().sort((a, b) =>
+          (DIFFICULTY_ORDER[a.difficulty] ?? 1) - (DIFFICULTY_ORDER[b.difficulty] ?? 1));
+      case "newest":
+      default:
+        // API already returns desc(createdAt), keep as-is
+        return result;
+    }
+  }, [all, filter, sortMode]);
 
   // ── Row-level callbacks (STABLE via useCallback) ──────────────────────
   //
@@ -696,15 +712,30 @@ function BankPageInner() {
           {/* View toggle: flat list vs grouped accordion. The toolbar
               above always stays visible regardless of mode. */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <Tabs
-              value={viewMode}
-              onValueChange={(v) => setViewMode(v as "flat" | "grouped")}
-            >
-              <TabsList>
-                <TabsTrigger value="flat">Flat</TabsTrigger>
-                <TabsTrigger value="grouped">Grouped</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <div className="flex items-center gap-3">
+              <Tabs
+                value={viewMode}
+                onValueChange={(v) => setViewMode(v as "flat" | "grouped")}
+              >
+                <TabsList>
+                  <TabsTrigger value="flat">Flat</TabsTrigger>
+                  <TabsTrigger value="grouped">Grouped</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              {viewMode === "flat" && (
+                <Select value={sortMode} onValueChange={(v) => setSortMode(v as SortMode)}>
+                  <SelectTrigger className="w-40 h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="newest">Newest first</SelectItem>
+                    <SelectItem value="oldest">Import order</SelectItem>
+                    <SelectItem value="topic">By topic</SelectItem>
+                    <SelectItem value="difficulty">By difficulty</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
             {viewMode === "grouped" && filtered.length > 0 && (
               <p className="text-xs text-muted-foreground">
                 Grouped by subject → lesson → topic. Click a group to expand;
