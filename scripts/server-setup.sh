@@ -5,15 +5,7 @@
 # Run this ONCE on the server after cloning the repo:
 #   git clone https://github.com/mohsaqr/carmenita.git
 #   cd carmenita
-#   bash scripts/server-setup.sh
-#
-# What it does:
-#   1. Installs Node.js 22 if missing
-#   2. Installs npm dependencies and builds the app
-#   3. Creates a systemd service (carmenita) on port 3000
-#   4. Creates a deploy script + webhook listener service
-#      so pushes to main auto-redeploy
-#   5. Prints the webhook URL to add on GitHub
+#   sudo bash scripts/server-setup.sh
 #
 set -euo pipefail
 
@@ -24,36 +16,68 @@ WEBHOOK_PORT="9000"
 APP_DIR="/home/${USER_NAME}/carmenita"
 DEPLOY_DIR="/home/${USER_NAME}/carmenita-deploy"
 WEBHOOK_SECRET="$(openssl rand -hex 20)"
+REQUIRED_NODE_MAJOR="22"
 
 echo "============================================"
 echo "  Carmenita Server Setup"
-echo "  User:   ${USER_NAME}"
-echo "  Server: ${SERVER_IP}"
-echo "  Port:   ${APP_PORT}"
 echo "============================================"
 echo ""
 
-# ── 1. Node.js ────────────────────────────────────────────────────────
+# ── 1. Ensure Node.js 22 (remove wrong versions) ─────────────────────
 
-if command -v node &>/dev/null && [[ "$(node -v)" == v2[0-9]* || "$(node -v)" == v22* ]]; then
-  echo "[1/5] Node.js already installed: $(node -v)"
+current_node_major=""
+if command -v node &>/dev/null; then
+  current_node_major="$(node -v | sed 's/^v//' | cut -d. -f1)"
+fi
+
+if [[ "$current_node_major" == "$REQUIRED_NODE_MAJOR" ]]; then
+  echo "[1/5] Node.js $(node -v) OK"
 else
-  echo "[1/5] Installing Node.js 22..."
-  if command -v zypper &>/dev/null; then
-    # Try NodeSource RPM first, fall back to zypper packages
-    curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - || true
-    sudo zypper install -y nodejs || sudo zypper install -y nodejs22 npm22
-  else
-    echo "ERROR: zypper not found. Install Node.js 22 manually."
+  echo "[1/5] Installing Node.js ${REQUIRED_NODE_MAJOR}..."
+
+  # Remove any existing Node that isn't v22
+  if [[ -n "$current_node_major" ]]; then
+    echo "  Removing Node.js v${current_node_major} first..."
+    sudo zypper remove -y nodejs* npm* 2>/dev/null || true
+    sudo rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx 2>/dev/null || true
+    hash -r
+  fi
+
+  # Install v22 via NodeSource RPM (works on SUSE/openSUSE)
+  if ! curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -; then
+    echo "  NodeSource setup failed, trying zypper directly..."
+    sudo zypper addrepo --refresh \
+      "https://rpm.nodesource.com/pub_22.x/nodistro/nodejs/" nodesource 2>/dev/null || true
+    sudo zypper --gpg-auto-import-keys refresh nodesource
+  fi
+  sudo zypper install -y nodejs
+
+  # Verify
+  hash -r
+  if ! command -v node &>/dev/null; then
+    echo "ERROR: Node.js installation failed. Install Node.js 22 manually and re-run."
     exit 1
   fi
-  echo "  Node $(node -v) installed"
+  installed_major="$(node -v | sed 's/^v//' | cut -d. -f1)"
+  if [[ "$installed_major" != "$REQUIRED_NODE_MAJOR" ]]; then
+    echo "ERROR: Got Node.js v${installed_major} instead of v${REQUIRED_NODE_MAJOR}."
+    echo "  Remove it and install v22 manually:"
+    echo "    sudo zypper remove nodejs"
+    echo "    curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -"
+    echo "    sudo zypper install -y nodejs"
+    exit 1
+  fi
+  echo "  Node.js $(node -v) installed"
 fi
 
 # ── 2. Build ──────────────────────────────────────────────────────────
 
 echo "[2/5] Installing dependencies and building..."
 cd "${APP_DIR}"
+
+# Clean any stale native modules from a different Node version
+rm -rf node_modules
+
 npm install --no-audit --no-fund
 npm run db:migrate
 npm run build
@@ -67,7 +91,10 @@ echo "  Build complete"
 
 # ── 3. App service ────────────────────────────────────────────────────
 
-echo "[3/5] Creating systemd service for Carmenita..."
+echo "[3/5] Creating systemd service..."
+
+NODE_BIN="$(command -v node)"
+
 sudo tee /etc/systemd/system/carmenita.service > /dev/null << SERVICEEOF
 [Unit]
 Description=Carmenita Quiz Platform
@@ -76,7 +103,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${APP_DIR}
-ExecStart=$(command -v node) .next/standalone/server.js
+ExecStart=${NODE_BIN} .next/standalone/server.js
 Environment=PORT=${APP_PORT}
 Environment=HOSTNAME=0.0.0.0
 Restart=always
@@ -97,16 +124,17 @@ echo "[4/5] Setting up auto-deploy webhook..."
 
 mkdir -p "${DEPLOY_DIR}"
 
-# Deploy script — called by the webhook on each push to main
-cat > "${DEPLOY_DIR}/redeploy.sh" << 'DEPLOYEOF'
+# Deploy script
+cat > "${DEPLOY_DIR}/redeploy.sh" << DEPLOYEOF
 #!/bin/bash
 set -e
-LOG="/home/USERPLACEHOLDER/carmenita-deploy/deploy.log"
-exec >> "$LOG" 2>&1
+LOG="${DEPLOY_DIR}/deploy.log"
+exec >> "\$LOG" 2>&1
 echo ""
-echo "=== Deploy started: $(date) ==="
-cd /home/USERPLACEHOLDER/carmenita
+echo "=== Deploy started: \$(date) ==="
+cd ${APP_DIR}
 git pull origin main
+rm -rf node_modules
 npm install --no-audit --no-fund
 npm run db:migrate
 npm run build
@@ -114,11 +142,8 @@ cp -r .next/static .next/standalone/.next/static
 mkdir -p .next/standalone/public
 cp -r public/. .next/standalone/public/ 2>/dev/null || true
 sudo systemctl restart carmenita
-echo "=== Deploy complete: $(date) ==="
+echo "=== Deploy complete: \$(date) ==="
 DEPLOYEOF
-
-# Replace placeholder with actual username
-sed -i "s|USERPLACEHOLDER|${USER_NAME}|g" "${DEPLOY_DIR}/redeploy.sh"
 chmod +x "${DEPLOY_DIR}/redeploy.sh"
 
 # Webhook config
@@ -156,19 +181,19 @@ cat > "${DEPLOY_DIR}/hooks.json" << HOOKSEOF
 ]
 HOOKSEOF
 
-# Install webhook binary if not present
+# Install webhook binary
 if ! command -v webhook &>/dev/null; then
   echo "  Installing webhook tool..."
-  if command -v go &>/dev/null; then
-    GOBIN=/usr/local/bin sudo -E go install github.com/adnanh/webhook@latest
-  else
-    # Download pre-built binary
-    WEBHOOK_VER="2.8.1"
-    curl -fsSL "https://github.com/adnanh/webhook/releases/download/${WEBHOOK_VER}/webhook-linux-amd64.tar.gz" \
-      | sudo tar -xz -C /usr/local/bin --strip-components=1
-  fi
+  WEBHOOK_VER="2.8.1"
+  TMP_DIR="$(mktemp -d)"
+  curl -fsSL "https://github.com/adnanh/webhook/releases/download/${WEBHOOK_VER}/webhook-linux-amd64.tar.gz" \
+    -o "${TMP_DIR}/webhook.tar.gz"
+  tar -xzf "${TMP_DIR}/webhook.tar.gz" -C "${TMP_DIR}"
+  sudo cp "${TMP_DIR}/webhook-linux-amd64/webhook" /usr/local/bin/webhook
+  sudo chmod +x /usr/local/bin/webhook
+  rm -rf "${TMP_DIR}"
 fi
-WEBHOOK_BIN=$(command -v webhook || echo "/usr/local/bin/webhook")
+WEBHOOK_BIN="$(command -v webhook)"
 
 # Webhook systemd service
 sudo tee /etc/systemd/system/carmenita-webhook.service > /dev/null << WHSERVICEEOF
@@ -191,12 +216,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now carmenita-webhook
 echo "  Webhook listening on port ${WEBHOOK_PORT}"
 
-# Allow the deploy script to restart the service without a password
+# Passwordless restart for deploy script
 SUDOERS_LINE="${USER_NAME} ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart carmenita"
 if ! sudo grep -qF "$SUDOERS_LINE" /etc/sudoers.d/carmenita 2>/dev/null; then
   echo "$SUDOERS_LINE" | sudo tee /etc/sudoers.d/carmenita > /dev/null
   sudo chmod 0440 /etc/sudoers.d/carmenita
-  echo "  Sudoers rule added for passwordless restart"
 fi
 
 # ── 5. Done ──────────────────────────────────────────────────────────
@@ -213,7 +237,7 @@ echo "  WEBHOOK SECRET (save this!):"
 echo "  ${WEBHOOK_SECRET}"
 echo ""
 echo "  Add this webhook on GitHub:"
-echo "    1. Go to: github.com/mohsaqr/carmenita/settings/hooks"
+echo "    1. github.com/mohsaqr/carmenita/settings/hooks"
 echo "    2. Payload URL: http://${SERVER_IP}:${WEBHOOK_PORT}/hooks/redeploy"
 echo "    3. Content type: application/json"
 echo "    4. Secret: ${WEBHOOK_SECRET}"
@@ -223,10 +247,4 @@ echo "  Logs:"
 echo "    App:    sudo journalctl -u carmenita -f"
 echo "    Deploy: tail -f ${DEPLOY_DIR}/deploy.log"
 echo "    Hook:   sudo journalctl -u carmenita-webhook -f"
-echo ""
-echo "  To password-protect, edit the service:"
-echo "    sudo systemctl edit carmenita"
-echo "    Add: Environment=CARMENITA_USER=admin"
-echo "    Add: Environment=CARMENITA_PASS=your-secret"
-echo "    Then: sudo systemctl restart carmenita"
 echo ""
