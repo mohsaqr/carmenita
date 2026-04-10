@@ -22,7 +22,9 @@ export async function getStaticQuizIds(): Promise<string[]> {
       .prepare("SELECT id FROM quizzes WHERE deleted_at IS NULL")
       .all() as Array<{ id: string }>;
     db.close();
-    return rows.map((r) => r.id);
+    const ids = rows.map((r) => r.id);
+    // Must return at least one entry or Next.js static export fails
+    return ids.length > 0 ? ids : ["_"];
   } catch {
     // No DB yet (first-time checkout, CI without seed, etc.) — return a
     // single sentinel so Next still emits the route shell. User-created
