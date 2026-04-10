@@ -163,6 +163,48 @@ The synthetic PPTX tests in `doc-extract-pptx.test.ts` build fixtures in-memory 
 
 `better-sqlite3` is **synchronous** — Drizzle's better-sqlite3 driver returns values directly, not Promises. The `await`s in code that wraps it are no-ops, but harmless and consistent with other Drizzle drivers.
 
+### Dual build: server vs static export
+
+The app has two build modes controlled by `STATIC_BUILD=1` in `next.config.ts`:
+
+1. **Server build** (default) — `next build` produces a `standalone` Node.js server. Real API routes, better-sqlite3, middleware — the full stack.
+2. **Static export** — `scripts/build-static.sh` produces a fully static `out/` directory for GitHub Pages / any CDN. No Node runtime.
+
+In the static build, there are no server-side API routes. Instead:
+
+- `src/lib/local-api/interceptor.ts` monkey-patches `window.fetch` so `/api/*` requests are handled entirely in the browser by `handlers.ts`, which runs SQL against a **sql.js** (WebAssembly SQLite) instance loaded from a seed `carmenita.db` shipped with the build.
+- `src/lib/local-api/db.ts` bootstraps sql.js, loads the DB from IndexedDB (or the seed file on first visit), and flushes changes back to IndexedDB.
+- `src/lib/local-api/handlers.ts` reimplements the server-side route logic in browser JS — quiz CRUD, attempts with server-side scoring, bank import/export, taxonomy, trash.
+- `src/lib/local-api/static-params.ts` reads `carmenita.db` at build time to enumerate quiz IDs for `generateStaticParams()`.
+
+The interceptor only mounts when `NEXT_PUBLIC_STATIC_BUILD === "1"` (via the `StaticApiBootstrap` component), so it's inert in the normal server build.
+
+**Query-param shell pages**: GitHub Pages can't serve dynamic `[id]` routes. The solution is paired pages: `/quiz/[id]/page.tsx` (server build, renders directly) alongside `/quiz/page.tsx` (static build shell, reads `?id=` from the URL and renders the same component). The shells live at `/quiz/page.tsx`, `/quiz/results/page.tsx`, and `/quiz/analytics/page.tsx`.
+
+**Build scripts** in `scripts/`:
+- `build-static.sh` — orchestrates the static build: stashes API routes, copies sql.js WASM files, runs `next build`, calls `inject-shim.mjs`, restores routes. Has an EXIT trap for crash recovery.
+- `inject-shim.mjs` — post-build HTML rewriter that hoists a fetch-queueing `<script>` as the first `<head>` child, solving a race condition where Next.js chunks fire `fetch('/api/...')` before the sql.js interceptor is ready.
+- `hash-password.mjs` — generates SHA-256 password hashes for the password-gate feature.
+
+### Optional middleware (Basic Auth)
+
+`src/middleware.ts` adds opt-in HTTP Basic Auth. Enabled only when **both** `CARMENITA_USER` and `CARMENITA_PASS` env vars are set; otherwise it's a no-op. Protects all pages and API routes. Does NOT work on GitHub Pages (no Node runtime there).
+
+### Environment variables
+
+No `.env` file is committed. All vars are optional:
+
+| Variable | Purpose | Where used |
+|---|---|---|
+| `CARMENITA_USER` | Basic Auth username | `src/middleware.ts` |
+| `CARMENITA_PASS` | Basic Auth password | `src/middleware.ts` |
+| `STATIC_BUILD=1` | Triggers static export mode | `next.config.ts` |
+| `PAGES_BASE_PATH` | Sub-path prefix for GitHub Pages (e.g. `/carmenita`) | `next.config.ts` |
+| `NEXT_PUBLIC_STATIC_BUILD` | Client-side flag to activate the fetch interceptor | `StaticApiBootstrap` component |
+| `NEXT_PUBLIC_BASE_PATH` | Client-side base path for asset URLs | Layout / static components |
+
+API keys for LLM providers live in **browser localStorage**, never in env vars.
+
 ## Conventions
 
 - **TypeScript strict mode.** `npm run typecheck` must be 0 errors before any commit.
@@ -194,8 +236,12 @@ When you need to find something fast:
 - Analytics SQL: `src/lib/analytics.ts`
 - Provider registry: `src/lib/ai/providers.ts`
 - Zustand store: `src/lib/store.ts`
-- API routes: `src/app/api/**/route.ts` (26 routes)
+- API routes: `src/app/api/**/route.ts` (31 routes)
 - Unified creation page: `src/app/create/page.tsx`
 - Bank UI (the main control panel): `src/app/bank/page.tsx`
 - Reusable ImportCard: `src/components/ImportCard.tsx`
 - Quiz runner state machine: `src/hooks/useQuizRunner.ts`
+- Static-build fetch interceptor: `src/lib/local-api/interceptor.ts`
+- Static-build browser DB (sql.js): `src/lib/local-api/db.ts`
+- Static-build API handlers: `src/lib/local-api/handlers.ts`
+- Middleware (optional Basic Auth): `src/middleware.ts`

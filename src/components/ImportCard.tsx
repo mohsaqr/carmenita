@@ -44,7 +44,7 @@ export interface ImportCardProps {
   onImported: (result: ImportResult) => void;
 }
 
-const IMPORT_PLACEHOLDERS: Record<ImportFormat, string> = {
+export const IMPORT_PLACEHOLDERS: Record<ImportFormat, string> = {
   markdown: `## Q1
 **Type:** mcq-single
 **Difficulty:** easy
