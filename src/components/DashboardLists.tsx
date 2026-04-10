@@ -86,7 +86,7 @@ export function DashboardLists() {
           <StatTile
             label="Avg score"
             value={
-              overview.avgScore !== null
+              overview.avgScore != null && Number.isFinite(overview.avgScore)
                 ? `${Math.round(overview.avgScore * 100)}%`
                 : "—"
             }

@@ -576,6 +576,95 @@ export async function quickQuiz(body: {
   };
 }
 
+// ── /api/analytics ────────────────────────────────────────────────────
+
+export function analyticsOverview() {
+  const [row] = queryAll<{
+    quiz_count: number;
+    attempt_count: number;
+    document_count: number;
+    avg_score: number | null;
+  }>(
+    `SELECT
+       (SELECT COUNT(*) FROM quizzes WHERE deleted_at IS NULL) AS quiz_count,
+       (SELECT COUNT(*) FROM attempts WHERE completed_at IS NOT NULL) AS attempt_count,
+       (SELECT COUNT(*) FROM documents) AS document_count,
+       (SELECT AVG(score) FROM attempts WHERE completed_at IS NOT NULL) AS avg_score`,
+  );
+  return {
+    quizCount: row?.quiz_count ?? 0,
+    attemptCount: row?.attempt_count ?? 0,
+    documentCount: row?.document_count ?? 0,
+    avgScore: row?.avg_score ?? null,
+  };
+}
+
+export function analyticsTopics() {
+  return queryAll<{ topic: string; total: number; correct: number; rate: number }>(
+    `SELECT q.topic, COUNT(*) AS total,
+       SUM(CASE WHEN a.is_correct THEN 1 ELSE 0 END) AS correct,
+       AVG(CASE WHEN a.is_correct THEN 1.0 ELSE 0 END) AS rate
+     FROM answers a
+     JOIN questions q ON q.id = a.question_id
+     JOIN attempts at ON at.id = a.attempt_id
+     WHERE at.completed_at IS NOT NULL
+     GROUP BY q.topic ORDER BY rate ASC`,
+  );
+}
+
+export function analyticsDifficulty() {
+  return queryAll<{ difficulty: string; total: number; correct: number; rate: number }>(
+    `SELECT q.difficulty, COUNT(*) AS total,
+       SUM(CASE WHEN a.is_correct THEN 1 ELSE 0 END) AS correct,
+       AVG(CASE WHEN a.is_correct THEN 1.0 ELSE 0 END) AS rate
+     FROM answers a
+     JOIN questions q ON q.id = a.question_id
+     JOIN attempts at ON at.id = a.attempt_id
+     WHERE at.completed_at IS NOT NULL
+     GROUP BY q.difficulty
+     ORDER BY CASE q.difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 WHEN 'hard' THEN 3 END`,
+  );
+}
+
+export function analyticsBloom() {
+  const rows = queryAll<{ bloom_level: string; total: number; correct: number; rate: number }>(
+    `SELECT q.bloom_level, COUNT(*) AS total,
+       SUM(CASE WHEN a.is_correct THEN 1 ELSE 0 END) AS correct,
+       AVG(CASE WHEN a.is_correct THEN 1.0 ELSE 0 END) AS rate
+     FROM answers a
+     JOIN questions q ON q.id = a.question_id
+     JOIN attempts at ON at.id = a.attempt_id
+     WHERE at.completed_at IS NOT NULL
+     GROUP BY q.bloom_level
+     ORDER BY CASE q.bloom_level
+       WHEN 'remember' THEN 1 WHEN 'understand' THEN 2 WHEN 'apply' THEN 3
+       WHEN 'analyze' THEN 4 WHEN 'evaluate' THEN 5 WHEN 'create' THEN 6 END`,
+  );
+  return rows.map((r) => ({ bloomLevel: r.bloom_level, total: r.total, correct: r.correct, rate: r.rate }));
+}
+
+export function analyticsSlowest(limit = 10) {
+  const rows = queryAll<{ id: string; question: string; avg_ms: number; answered: number }>(
+    `SELECT q.id, q.question, AVG(a.time_ms) AS avg_ms, COUNT(*) AS answered
+     FROM answers a JOIN questions q ON q.id = a.question_id
+     GROUP BY q.id HAVING answered > 0
+     ORDER BY avg_ms DESC LIMIT ?`,
+    [limit],
+  );
+  return rows.map((r) => ({ questionId: r.id, question: r.question, avgMs: r.avg_ms, answered: r.answered }));
+}
+
+export function analyticsImprovement(quizId: string) {
+  return queryAll<{ trial: number; completed_at: string; score: number }>(
+    `SELECT ROW_NUMBER() OVER (ORDER BY completed_at ASC) AS trial,
+       completed_at, score
+     FROM attempts
+     WHERE quiz_id = ? AND completed_at IS NOT NULL AND score IS NOT NULL
+     ORDER BY completed_at ASC`,
+    [quizId],
+  ).map((r) => ({ trial: r.trial, completedAt: r.completed_at, score: r.score }));
+}
+
 // ── /api/analytics/needs-review ────────────────────────────────────────
 
 export function needsReview(limit = 50) {

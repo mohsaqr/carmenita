@@ -14,6 +14,12 @@
  */
 import { initLocalDb } from "./db";
 import {
+  analyticsBloom,
+  analyticsDifficulty,
+  analyticsImprovement,
+  analyticsOverview,
+  analyticsSlowest,
+  analyticsTopics,
   createAttempt,
   exportBank,
   getAttempt,
@@ -215,14 +221,38 @@ async function route(req: Request): Promise<Response | null> {
     return methodNotAllowed(pathname, method);
   }
 
-  // /api/analytics/needs-review
-  if (segs[0] === "analytics" && segs[1] === "needs-review" && segs.length === 2) {
-    if (method === "GET") {
+  // /api/analytics/*
+  if (segs[0] === "analytics") {
+    if (method !== "GET") return methodNotAllowed(pathname, method);
+
+    if (segs[1] === "overview" && segs.length === 2)
+      return json({ body: analyticsOverview() });
+
+    if (segs[1] === "topics" && segs.length === 2)
+      return json({ body: { topics: analyticsTopics() } });
+
+    if (segs[1] === "difficulty" && segs.length === 2)
+      return json({ body: { difficulty: analyticsDifficulty() } });
+
+    if (segs[1] === "bloom" && segs.length === 2)
+      return json({ body: { bloom: analyticsBloom() } });
+
+    if (segs[1] === "slowest" && segs.length === 2) {
+      const limitParam = url.searchParams.get("limit");
+      const limit = limitParam ? parseInt(limitParam, 10) || 10 : 10;
+      return json({ body: { slowest: analyticsSlowest(limit) } });
+    }
+
+    if (segs[1] === "improvement" && segs.length === 3) {
+      const quizId = segs[2];
+      return json({ body: { points: analyticsImprovement(quizId) } });
+    }
+
+    if (segs[1] === "needs-review" && segs.length === 2) {
       const limitParam = url.searchParams.get("limit");
       const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 50, 200) : 50;
       return json({ body: { questions: needsReview(limit) } });
     }
-    return methodNotAllowed(pathname, method);
   }
 
   // /api/trash
