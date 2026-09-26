@@ -77,7 +77,8 @@ export function PostImportActions({ imported, onImportMore }: PostImportActionsP
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: `Imported set — ${new Date().toLocaleString()}`,
+          // The quiz is named after the set the user just named.
+          title: imported.setName,
           count: imported.count,
           candidateIds: imported.ids,
           immediateFeedback: true,
@@ -180,7 +181,7 @@ export function PostImportActions({ imported, onImportMore }: PostImportActionsP
         <div>
           <h2 className="text-xl font-semibold">
             Imported {imported.count} question
-            {imported.count === 1 ? "" : "s"}. What next?
+            {imported.count === 1 ? "" : "s"} into &ldquo;{imported.setName}&rdquo;. What next?
           </h2>
           {imported.warnings.length > 0 && (
             <p className="text-xs text-amber-600 mt-1">

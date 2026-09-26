@@ -96,13 +96,14 @@ export function PromptAndImport({
         throw new Error(msg + warnings);
       }
       toast.success(
-        `Imported ${data.imported} questions` +
+        `Imported ${data.imported} questions into "${setName.trim()}"` +
           (data.warnings?.length > 0 ? ` (${data.warnings.length} warnings)` : ""),
       );
       onImported({
         count: data.imported ?? 0,
         ids: Array.isArray(data.ids) ? data.ids : [],
         warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        setName: setName.trim(),
       });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Import failed");
