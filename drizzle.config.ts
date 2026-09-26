@@ -5,7 +5,8 @@ export default {
   out: "./src/db/migrations",
   dialect: "sqlite",
   dbCredentials: {
-    url: "./carmenita.db",
+    // CARMENITA_DB points at the live DB in production (outside the repo).
+    url: process.env.CARMENITA_DB || "./carmenita.db",
   },
   verbose: true,
   strict: true,

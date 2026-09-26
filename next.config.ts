@@ -54,6 +54,13 @@ const nextConfig: NextConfig = {
   //                     breaks that path lookup, so we externalize it.
   //   • mammoth       — uses dynamic requires for its zip backend.
   serverExternalPackages: ["better-sqlite3", "pdfjs-dist", "mammoth"],
+  // The DB path in src/db/client.ts makes Next's file tracer copy any
+  // local *.db (live data: accounts, API keys) into .next/standalone.
+  // The server reads the DB from CARMENITA_DB at runtime, never from the
+  // bundle, so keep every database file out of the build output.
+  outputFileTracingExcludes: {
+    "*": ["./carmenita.db*", "./public/carmenita.db", "./out/**", "./seed/**"],
+  },
 };
 
 export default nextConfig;
