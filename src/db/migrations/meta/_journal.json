@@ -64,6 +64,13 @@
       "when": 1790450419040,
       "tag": "0008_user_admin_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790451964356,
+      "tag": "0009_scoring_methods",
+      "breakpoints": true
     }
   ]
 }

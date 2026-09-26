@@ -20,6 +20,15 @@ import {
 import { toast } from "sonner";
 import { PROMPTS } from "@/lib/prompts";
 import {
+  SCORING_LABELS,
+  SCORING_METHODS,
+  SCORING_SETTING_KEY,
+  SERVER_DEFAULT_SCORING,
+  STATIC_DEFAULT_SCORING,
+  isScoringMethod,
+  type ScoringMethod,
+} from "@/lib/scoring";
+import {
   clearPromptOverride,
   fetchPromptOverride,
   savePromptOverride,
@@ -112,6 +121,8 @@ export default function SettingsPage() {
           ))}
         </CardContent>
       </Card>
+
+      <ScoringCard />
 
       <PromptEditorCard />
     </div>
@@ -309,6 +320,95 @@ function ProviderRow({
  * it duplicates `carmenita.mcq.document` — editing either one is fine
  * but exposing both is confusing.
  */
+/**
+ * Account-wide scoring method (app_settings "scoring-method"). Any quiz
+ * can override it from the quiz or results screen. Changing it re-scores
+ * all finished attempts (except quizzes with their own method), so past
+ * results can be compared across methods.
+ */
+function ScoringCard() {
+  const fallback: ScoringMethod =
+    process.env.NEXT_PUBLIC_STATIC_BUILD === "1" ? STATIC_DEFAULT_SCORING : SERVER_DEFAULT_SCORING;
+  const [method, setMethod] = useState<ScoringMethod | null>(null);
+  const url = `/api/settings/${SCORING_SETTING_KEY}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : { value: null }))
+      .then((data: { value?: unknown }) => {
+        if (!cancelled) setMethod(isScoringMethod(data.value) ? data.value : fallback);
+      })
+      .catch(() => {
+        if (!cancelled) setMethod(fallback);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [url, fallback]);
+
+  async function choose(next: ScoringMethod) {
+    const previous = method;
+    setMethod(next);
+    try {
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: next }),
+      });
+      if (!res.ok) throw new Error(`Could not save (${res.status})`);
+      const data = (await res.json()) as { rescored?: number };
+      const n = data.rescored ?? 0;
+      toast.success(
+        `Scoring: ${SCORING_LABELS[next].name}` +
+          (n > 0 ? ` — re-scored ${n} past attempt${n === 1 ? "" : "s"}` : ""),
+      );
+    } catch (err) {
+      setMethod(previous);
+      toast.error(err instanceof Error ? err.message : "Could not save");
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Scoring</CardTitle>
+        <CardDescription>
+          How quiz answers are scored, for all your quizzes. Changing it also re-scores your past
+          attempts, so you can switch back and forth to compare. A single quiz can use its own
+          method (pick it at the top of the quiz or its results).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {method === null ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          SCORING_METHODS.map((m) => (
+            <label
+              key={m}
+              className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors ${
+                method === m ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+              }`}
+            >
+              <input
+                type="radio"
+                name="scoring-method"
+                className="mt-1"
+                checked={method === m}
+                onChange={() => void choose(m)}
+              />
+              <span>
+                <span className="block text-sm font-medium">{SCORING_LABELS[m].name}</span>
+                <span className="block text-xs text-muted-foreground">{SCORING_LABELS[m].description}</span>
+              </span>
+            </label>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function PromptEditorCard() {
   const EDITABLE_IDS = Object.values(PROMPTS)
     .map((p) => p.id)

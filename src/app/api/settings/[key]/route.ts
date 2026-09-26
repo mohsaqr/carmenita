@@ -6,6 +6,8 @@ import {
   setSetting,
   SETTINGS_KEY_PATTERN,
 } from "@/lib/settings-store";
+import { isScoringMethod, SCORING_SETTING_KEY } from "@/lib/scoring";
+import { rescoreAttempts } from "@/lib/rescore";
 
 /**
  * /api/settings/[key] — one per-user setting.
@@ -50,6 +52,14 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   if (value === undefined || value === null) {
     return NextResponse.json({ error: "Use DELETE to clear a setting" }, { status: 400 });
   }
+  if (r.key === SCORING_SETTING_KEY) {
+    if (!isScoringMethod(value)) {
+      return NextResponse.json({ error: "Unknown scoring method" }, { status: 400 });
+    }
+    setSetting(r.userId, r.key, value);
+    // Past results follow the new method (quizzes with an override keep theirs).
+    return NextResponse.json({ ok: true, rescored: rescoreAttempts(r.userId) });
+  }
   setSetting(r.userId, r.key, value);
   return NextResponse.json({ ok: true });
 }
@@ -58,5 +68,8 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
   const r = await resolve(req, ctx);
   if ("error" in r) return r.error;
   deleteSetting(r.userId, r.key);
+  if (r.key === SCORING_SETTING_KEY) {
+    return NextResponse.json({ ok: true, rescored: rescoreAttempts(r.userId) });
+  }
   return NextResponse.json({ ok: true });
 }

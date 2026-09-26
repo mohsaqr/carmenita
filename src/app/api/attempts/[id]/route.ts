@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, asc } from "drizzle-orm";
 import { db, sqlite } from "@/db/client";
-import { attempts, answers, questions, quizQuestions } from "@/db/schema";
+import { attempts, answers, questions, quizQuestions, quizzes } from "@/db/schema";
+import { getSetting } from "@/lib/settings-store";
+import { resolveScoringMethod, scoreQuestion, SCORING_SETTING_KEY, SERVER_DEFAULT_SCORING } from "@/lib/scoring";
 import { SubmitAttemptSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
 
@@ -119,11 +121,22 @@ export async function PATCH(
     );
   }
 
+  // Scoring method: the quiz's override, else the account default from
+  // Settings, else UMCH. Recorded on the attempt so results always show
+  // how it was scored, even if the setting changes later.
+  const quizRow = db.select({ settings: quizzes.settings }).from(quizzes).where(eq(quizzes.id, attempt.quizId)).get();
+  const scoringMethod = resolveScoringMethod(
+    quizRow?.settings?.scoringMethod,
+    getSetting(userId, SCORING_SETTING_KEY),
+    SERVER_DEFAULT_SCORING,
+  );
+
   // Load the quiz's questions through the junction
   const quizQuestionRows = db
     .select({
       id: questions.id,
       type: questions.type,
+      options: questions.options,
       correctAnswer: questions.correctAnswer,
     })
     .from(quizQuestions)
@@ -135,32 +148,31 @@ export async function PATCH(
   const now = new Date().toISOString();
   const scoredAnswers = parsed.data.answers.map((submitted) => {
     const q = questionMap.get(submitted.questionId);
-    if (!q) {
-      return {
-        attemptId: id,
-        questionId: submitted.questionId,
-        userAnswer: submitted.userAnswer,
-        isCorrect: false,
-        timeMs: submitted.timeMs,
-      };
-    }
+    const points = q
+      ? scoreQuestion(scoringMethod, q.type, q.correctAnswer, submitted.userAnswer, q.options.length)
+      : 0;
     return {
       attemptId: id,
       questionId: submitted.questionId,
       userAnswer: submitted.userAnswer,
-      isCorrect: scoreAnswer(q.type, q.correctAnswer, submitted.userAnswer),
+      // "Correct" = full marks; partial credit lives in `points`.
+      isCorrect: points === 1,
+      points,
       timeMs: submitted.timeMs,
     };
   });
 
+  // Score = average fraction over ALL quiz questions (unanswered ones
+  // count 0), so it stays comparable with older attempts.
   const total = quizQuestionRows.length;
   const correct = scoredAnswers.filter((a) => a.isCorrect).length;
-  const score = total > 0 ? correct / total : 0;
+  const earned = scoredAnswers.reduce((sum, a) => sum + a.points, 0);
+  const score = total > 0 ? earned / total : 0;
 
   const tx = sqlite.transaction(() => {
     db.insert(answers).values(scoredAnswers).run();
     db.update(attempts)
-      .set({ completedAt: now, score })
+      .set({ completedAt: now, score, scoringMethod })
       .where(eq(attempts.id, id))
       .run();
   });
@@ -171,23 +183,11 @@ export async function PATCH(
     score,
     correct,
     total,
+    scoringMethod,
+    // Exam-style totals: points out of 10 per question.
+    pointsEarned: Math.round(earned * 100) / 10,
+    maxPoints: total * 10,
     completedAt: now,
     answers: scoredAnswers,
   });
-}
-
-function scoreAnswer(
-  type: "mcq-single" | "mcq-multi" | "true-false",
-  correct: number | number[],
-  submitted: number | number[] | null,
-): boolean {
-  if (submitted === null) return false;
-  if (type === "mcq-multi") {
-    if (!Array.isArray(correct) || !Array.isArray(submitted)) return false;
-    if (correct.length !== submitted.length) return false;
-    const cSet = new Set(correct);
-    return submitted.every((v) => cSet.has(v));
-  }
-  if (typeof correct !== "number" || typeof submitted !== "number") return false;
-  return correct === submitted;
 }

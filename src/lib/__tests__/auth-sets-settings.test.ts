@@ -439,6 +439,11 @@ describe("schema upgrade of pre-sets databases", () => {
       { name: "Untitled import", n: 1 },
     ]);
     expect(db.prepare("SELECT COUNT(*) n FROM app_settings").get()).toEqual({ n: 0 });
+    // Later schema additions the static build must also pick up.
+    const cols = (t: string) => (db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string }>).map((c) => c.name);
+    expect(cols("question_sets")).toContain("received_from");
+    expect(cols("answers")).toContain("points");
+    expect(cols("attempts")).toContain("scoring_method");
     db.close();
   });
 });

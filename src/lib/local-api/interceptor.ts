@@ -44,6 +44,7 @@ import {
   softDeleteQuiz,
   submitAttempt,
   updateQuestion,
+  updateQuizScoring,
   updateSet,
 } from "./handlers";
 
@@ -138,6 +139,10 @@ async function route(req: Request): Promise<Response | null> {
     const id = segs[1];
     if (method === "GET") return json(getQuiz(id));
     if (method === "DELETE") return json(await softDeleteQuiz(id));
+    if (method === "PATCH") {
+      const body = (await parseJson(req)) as { scoringMethod?: unknown };
+      return json(await updateQuizScoring(id, body));
+    }
     return methodNotAllowed(pathname, method);
   }
 

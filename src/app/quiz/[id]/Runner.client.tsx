@@ -10,6 +10,8 @@ import { toast } from "sonner";
 import { QuestionCard } from "@/components/quiz/QuestionCard";
 import { useQuizRunner } from "@/hooks/useQuizRunner";
 import type { Quiz, Question } from "@/types";
+import { isScoringMethod } from "@/lib/scoring";
+import { QuizScoringSelect, type ScoringInfo } from "@/components/quiz/QuizScoringSelect";
 
 /**
  * Quiz-taking client component. Loads the quiz, starts an attempt,
@@ -30,6 +32,8 @@ export default function Runner({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   // Local selection buffer: null = nothing selected for current question
   const [pendingSelection, setPendingSelection] = useState<number | number[] | null>(null);
+  // null in the static build (no scoring info) → plain right/wrong feedback.
+  const [scoring, setScoring] = useState<ScoringInfo | null>(null);
 
   const runner = useQuizRunner(questions);
 
@@ -44,6 +48,7 @@ export default function Runner({ id }: { id: string }) {
         if (cancelled) return;
         setQuiz(qData.quiz);
         setQuestions(qData.questions);
+        if (qData.scoring && isScoringMethod(qData.scoring.method)) setScoring(qData.scoring);
 
         const aRes = await fetch("/api/attempts", {
           method: "POST",
@@ -138,6 +143,9 @@ export default function Runner({ id }: { id: string }) {
               Question {runner.index + 1} of {runner.total}
             </p>
           </div>
+          {scoring && (
+            <QuizScoringSelect quizId={id} initial={scoring} onChanged={(next) => setScoring(next)} />
+          )}
           <Link href="/">
             <Button variant="ghost" size="sm">
               Exit
@@ -156,6 +164,7 @@ export default function Runner({ id }: { id: string }) {
           revealed={runner.revealed}
           onSelect={setPendingSelection}
           onSubmit={() => runner.submitAnswer(pendingSelection)}
+          scoringMethod={scoring?.method}
         />
       )}
 

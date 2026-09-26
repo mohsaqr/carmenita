@@ -19,6 +19,30 @@ import { parseGift, serializeGift } from "@/lib/formats/gift";
 import { parseAiken, serializeAiken } from "@/lib/formats/aiken";
 import { parseMarkdown, serializeMarkdown } from "@/lib/formats/markdown";
 import type { PortableQuestion } from "@/lib/formats/types";
+import {
+  isScoringMethod,
+  resolveScoringMethod,
+  scoreQuestion,
+  SCORING_SETTING_KEY,
+  STATIC_DEFAULT_SCORING,
+  type QuestionType,
+  type ScoringMethod,
+} from "@/lib/scoring";
+
+/** Static build: quiz override > this browser's Settings choice > right/wrong. */
+function localScoring(quizSettings: unknown) {
+  const override = (quizSettings as { scoringMethod?: unknown } | null)?.scoringMethod;
+  const row = queryOne<{ value: string }>(
+    `SELECT value FROM app_settings WHERE user_id = 'local' AND key = ?`,
+    [SCORING_SETTING_KEY],
+  );
+  const accountDefault = row ? jsonParse<unknown>(row.value, null) : null;
+  return {
+    method: resolveScoringMethod(override, accountDefault, STATIC_DEFAULT_SCORING),
+    override: isScoringMethod(override) ? override : null,
+    accountDefault: resolveScoringMethod(null, accountDefault, STATIC_DEFAULT_SCORING),
+  };
+}
 
 // ── Generic helpers ─────────────────────────────────────────────────────
 
@@ -120,11 +144,13 @@ export function getQuiz(id: string) {
     [id],
   );
 
+  const quizSettings = jsonParse<Record<string, unknown>>(quiz.settings, {});
   return {
     body: {
+      scoring: localScoring(quizSettings),
       quiz: {
         ...quiz,
-        settings: jsonParse(quiz.settings, {}),
+        settings: quizSettings,
         documentId: quiz.document_id,
         createdAt: quiz.created_at,
         deletedAt: quiz.deleted_at,
@@ -232,6 +258,7 @@ export function getAttempt(id: string) {
     started_at: string;
     completed_at: string | null;
     score: number | null;
+    scoring_method: string | null;
   }>(`SELECT * FROM attempts WHERE id = ?`, [id]);
   if (!attempt) {
     return { status: 404, body: { error: "Attempt not found" } };
@@ -252,9 +279,10 @@ export function getAttempt(id: string) {
     question_id: string;
     user_answer: string | null;
     is_correct: number;
+    points: number | null;
     time_ms: number;
   }>(
-    `SELECT question_id, user_answer, is_correct, time_ms FROM answers WHERE attempt_id = ?`,
+    `SELECT question_id, user_answer, is_correct, points, time_ms FROM answers WHERE attempt_id = ?`,
     [id],
   );
   const answerMap = new Map(answerRows.map((a) => [a.question_id, a]));
@@ -266,6 +294,7 @@ export function getAttempt(id: string) {
         startedAt: attempt.started_at,
         completedAt: attempt.completed_at,
         score: attempt.score,
+        scoringMethod: attempt.scoring_method ?? null,
       },
       questions: questionRows.map((q) => {
         const a = answerMap.get(q.id as string);
@@ -293,6 +322,7 @@ export function getAttempt(id: string) {
                 questionId: a.question_id,
                 userAnswer: jsonParse<number | number[] | null>(a.user_answer, null),
                 isCorrect: a.is_correct === 1,
+                points: a.points ?? null,
                 timeMs: a.time_ms,
               }
             : null,
@@ -308,22 +338,6 @@ type SubmittedAnswer = {
   timeMs: number;
 };
 
-function scoreAnswer(
-  type: string,
-  correct: number | number[],
-  submitted: number | number[] | null,
-): boolean {
-  if (submitted == null) return false;
-  if (type === "mcq-multi") {
-    if (!Array.isArray(correct) || !Array.isArray(submitted)) return false;
-    if (correct.length !== submitted.length) return false;
-    const s = new Set(correct);
-    return submitted.every((v) => s.has(v));
-  }
-  if (typeof correct !== "number" || typeof submitted !== "number") return false;
-  return correct === submitted;
-}
-
 export async function submitAttempt(
   id: string,
   body: { answers: SubmittedAnswer[] },
@@ -338,8 +352,11 @@ export async function submitAttempt(
     return { status: 409, body: { error: "Attempt is already submitted" } };
   }
 
-  const qRows = queryAll<{ id: string; type: string; correct_answer: string }>(
-    `SELECT q.id, q.type, q.correct_answer
+  const quizRow = queryOne<{ settings: string }>(`SELECT settings FROM quizzes WHERE id = ?`, [attempt.quiz_id]);
+  const scoringMethod: ScoringMethod = localScoring(jsonParse(quizRow?.settings, {})).method;
+
+  const qRows = queryAll<{ id: string; type: string; options: string; correct_answer: string }>(
+    `SELECT q.id, q.type, q.options, q.correct_answer
      FROM quiz_questions qq
      INNER JOIN questions q ON q.id = qq.question_id
      WHERE qq.quiz_id = ?`,
@@ -348,20 +365,23 @@ export async function submitAttempt(
   const qMap = new Map(
     qRows.map((q) => [
       q.id,
-      { type: q.type, correct: jsonParse<number | number[]>(q.correct_answer, 0) },
+      {
+        type: q.type as QuestionType,
+        optionCount: jsonParse<string[]>(q.options, []).length,
+        correct: jsonParse<number | number[]>(q.correct_answer, 0),
+      },
     ]),
   );
 
   const scored = body.answers.map((a) => {
     const q = qMap.get(a.questionId);
-    const isCorrect = q
-      ? scoreAnswer(q.type, q.correct, a.userAnswer)
-      : false;
-    return { ...a, isCorrect };
+    const points = q ? scoreQuestion(scoringMethod, q.type, q.correct, a.userAnswer, q.optionCount) : 0;
+    return { ...a, points, isCorrect: points === 1 };
   });
   const total = qRows.length;
   const correct = scored.filter((a) => a.isCorrect).length;
-  const score = total > 0 ? correct / total : 0;
+  const earned = scored.reduce((sum, a) => sum + a.points, 0);
+  const score = total > 0 ? earned / total : 0;
   const completedAt = nowIso();
 
   // Insert all answers + finalize attempt. sql.js has no explicit
@@ -370,19 +390,21 @@ export async function submitAttempt(
   try {
     for (const a of scored) {
       run(
-        `INSERT OR REPLACE INTO answers (attempt_id, question_id, user_answer, is_correct, time_ms) VALUES (?, ?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO answers (attempt_id, question_id, user_answer, is_correct, points, time_ms) VALUES (?, ?, ?, ?, ?, ?)`,
         [
           id,
           a.questionId,
           a.userAnswer == null ? null : JSON.stringify(a.userAnswer),
           a.isCorrect ? 1 : 0,
+          a.points,
           a.timeMs,
         ],
       );
     }
-    run(`UPDATE attempts SET completed_at = ?, score = ? WHERE id = ?`, [
+    run(`UPDATE attempts SET completed_at = ?, score = ?, scoring_method = ? WHERE id = ?`, [
       completedAt,
       score,
+      scoringMethod,
       id,
     ]);
     run("COMMIT");
@@ -398,12 +420,16 @@ export async function submitAttempt(
       score,
       correct,
       total,
+      scoringMethod,
+      pointsEarned: Math.round(earned * 100) / 10,
+      maxPoints: total * 10,
       completedAt,
       answers: scored.map((a) => ({
         attemptId: id,
         questionId: a.questionId,
         userAnswer: a.userAnswer,
         isCorrect: a.isCorrect,
+        points: a.points,
         timeMs: a.timeMs,
       })),
     },
@@ -1108,17 +1134,103 @@ export async function putSettingValue(key: string, body: { value?: unknown }) {
   if (body.value === undefined || body.value === null) {
     return { status: 400, body: { error: "Use DELETE to clear a setting" } };
   }
+  if (key === SCORING_SETTING_KEY && !isScoringMethod(body.value)) {
+    return { status: 400, body: { error: "Unknown scoring method" } };
+  }
   run(
     `INSERT INTO app_settings (user_id, key, value, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     [LOCAL_USER, key, JSON.stringify(body.value), nowIso()],
   );
+  const rescored = key === SCORING_SETTING_KEY ? localRescore() : undefined;
   await flushLocalDb();
-  return { body: { ok: true } };
+  return { body: { ok: true, ...(rescored !== undefined ? { rescored } : {}) } };
 }
 
 export async function deleteSettingValue(key: string) {
   run(`DELETE FROM app_settings WHERE user_id = ? AND key = ?`, [LOCAL_USER, key]);
+  const rescored = key === SCORING_SETTING_KEY ? localRescore() : undefined;
   await flushLocalDb();
-  return { body: { ok: true } };
+  return { body: { ok: true, ...(rescored !== undefined ? { rescored } : {}) } };
+}
+
+/**
+ * Static-build twin of src/lib/rescore.ts: re-score finished attempts
+ * (optionally one quiz's) with the method now in effect. Returns the
+ * number of attempts re-scored.
+ */
+function localRescore(quizId?: string): number {
+  const rows = queryAll<{ id: string; quiz_id: string; settings: string }>(
+    `SELECT a.id, a.quiz_id, z.settings FROM attempts a JOIN quizzes z ON z.id = a.quiz_id
+     WHERE a.completed_at IS NOT NULL ${quizId ? "AND a.quiz_id = ?" : ""}`,
+    quizId ? [quizId] : [],
+  );
+  if (rows.length === 0) return 0;
+  run("BEGIN");
+  try {
+    rows.forEach((attempt) => {
+      const method = localScoring(jsonParse(attempt.settings, {})).method;
+      const qs = new Map(
+        queryAll<{ id: string; type: string; options: string; correct_answer: string }>(
+          `SELECT q.id, q.type, q.options, q.correct_answer FROM quiz_questions qq
+           JOIN questions q ON q.id = qq.question_id WHERE qq.quiz_id = ?`,
+          [attempt.quiz_id],
+        ).map((q) => [q.id, q]),
+      );
+      const given = queryAll<{ question_id: string; user_answer: string | null }>(
+        `SELECT question_id, user_answer FROM answers WHERE attempt_id = ?`,
+        [attempt.id],
+      );
+      const earned = given.reduce((sum, a) => {
+        const q = qs.get(a.question_id);
+        const points = q
+          ? scoreQuestion(
+              method,
+              q.type as QuestionType,
+              jsonParse<number | number[]>(q.correct_answer, 0),
+              jsonParse<number | number[] | null>(a.user_answer, null),
+              jsonParse<string[]>(q.options, []).length,
+            )
+          : 0;
+        run(`UPDATE answers SET points = ?, is_correct = ? WHERE attempt_id = ? AND question_id = ?`, [
+          points,
+          points === 1 ? 1 : 0,
+          attempt.id,
+          a.question_id,
+        ]);
+        return sum + points;
+      }, 0);
+      run(`UPDATE attempts SET score = ?, scoring_method = ? WHERE id = ?`, [
+        qs.size > 0 ? earned / qs.size : 0,
+        method,
+        attempt.id,
+      ]);
+    });
+    run("COMMIT");
+  } catch (err) {
+    run("ROLLBACK");
+    throw err;
+  }
+  return rows.length;
+}
+
+// ── PATCH /api/quizzes/[id] (scoring override) ──────────────────────────
+
+export async function updateQuizScoring(id: string, body: { scoringMethod?: unknown }) {
+  const quiz = queryOne<{ settings: string }>(
+    `SELECT settings FROM quizzes WHERE id = ? AND deleted_at IS NULL`,
+    [id],
+  );
+  if (!quiz) return { status: 404, body: { error: "Quiz not found" } };
+  const next = body.scoringMethod;
+  if (next !== null && !isScoringMethod(next)) {
+    return { status: 400, body: { error: "Unknown scoring method" } };
+  }
+  const settings = jsonParse<Record<string, unknown>>(quiz.settings, {});
+  if (next === null) delete settings.scoringMethod;
+  else settings.scoringMethod = next;
+  run(`UPDATE quizzes SET settings = ? WHERE id = ?`, [JSON.stringify(settings), id]);
+  const rescored = localRescore(id);
+  await flushLocalDb();
+  return { body: { scoring: localScoring(settings), rescored } };
 }

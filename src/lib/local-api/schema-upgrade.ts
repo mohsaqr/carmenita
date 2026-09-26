@@ -72,5 +72,15 @@ export function upgradeLocalSchema(db: SqlAdapter): { changed: boolean } {
     changed = true;
   }
 
+  // Migration 0009 (scoring methods): per-answer points + per-attempt method.
+  if (!hasColumn("answers", "points")) {
+    db.exec(`ALTER TABLE answers ADD points real`);
+    changed = true;
+  }
+  if (!hasColumn("attempts", "scoring_method")) {
+    db.exec(`ALTER TABLE attempts ADD scoring_method text`);
+    changed = true;
+  }
+
   return { changed };
 }

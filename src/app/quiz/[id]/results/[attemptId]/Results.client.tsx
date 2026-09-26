@@ -6,10 +6,18 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Check, X, Minus, Loader2, RotateCcw } from "lucide-react";
+import { Check, CircleDot, X, Minus, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { Attempt, Question, Answer } from "@/types";
+import { isScoringMethod, SCORING_LABELS, toPoints } from "@/lib/scoring";
+import { QuizScoringSelect } from "@/components/quiz/QuizScoringSelect";
+
+/** Fraction of the max earned; older answers have no `points` → 1 or 0. */
+function earnedFraction(answer: Answer | null): number {
+  if (!answer) return 0;
+  return typeof answer.points === "number" ? answer.points : answer.isCorrect ? 1 : 0;
+}
 
 interface QuestionWithAnswer extends Question {
   answer: Answer | null;
@@ -35,6 +43,8 @@ export default function Results({
   const [data, setData] = useState<AttemptData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retakeWrongBusy, setRetakeWrongBusy] = useState(false);
+  // Bumped after the scoring method changes → re-fetch the re-scored attempt.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,7 +65,7 @@ export default function Results({
     return () => {
       cancelled = true;
     };
-  }, [attemptId]);
+  }, [attemptId, reloadKey]);
 
   if (error) {
     return (
@@ -75,11 +85,19 @@ export default function Results({
   }
 
   const { questions } = data;
+  // Attempts from before scoring methods have no method → right/wrong.
+  const method = isScoringMethod(data.attempt.scoringMethod) ? data.attempt.scoringMethod : "all-or-nothing";
+  const showPoints = method !== "all-or-nothing";
+  const fractions = questions.map((q) => earnedFraction(q.answer));
+  const isSkippedQ = (q: QuestionWithAnswer) => q.answer?.userAnswer === null || q.answer?.userAnswer === undefined;
   const correctCount = questions.filter((q) => q.answer?.isCorrect).length;
-  const skippedCount = questions.filter((q) => q.answer?.userAnswer === null || q.answer?.userAnswer === undefined).length;
-  const wrongCount = questions.length - correctCount - skippedCount;
+  const skippedCount = questions.filter(isSkippedQ).length;
+  const partialCount = questions.filter((q, i) => !isSkippedQ(q) && fractions[i] > 0 && fractions[i] < 1).length;
+  const wrongCount = questions.length - correctCount - skippedCount - partialCount;
   const total = questions.length;
-  const pct = total > 0 ? (correctCount / total) * 100 : 0;
+  const earned = fractions.reduce((a, b) => a + b, 0);
+  // Same number as attempt.score; for old attempts identical to correct/total.
+  const pct = total > 0 ? (earned / total) * 100 : 0;
   const missedIds = questions
     .filter((q) => !q.answer?.isCorrect)
     .map((q) => q.id);
@@ -112,15 +130,28 @@ export default function Results({
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header className="space-y-2">
-        <p className="text-xs text-muted-foreground uppercase tracking-wide">Attempt results</p>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide">Attempt results</p>
+          {/* Switch methods to compare: re-scores this quiz's attempts, then reloads. */}
+          <QuizScoringSelect quizId={quizId} onChanged={() => setReloadKey((k) => k + 1)} />
+        </div>
         <div className="flex items-baseline gap-3 flex-wrap">
           <h1 className="text-3xl font-bold tracking-tight">{Math.round(pct)}%</h1>
+          {showPoints && (
+            <span className="text-lg font-semibold tabular-nums">
+              {toPoints(earned)} / {total * 10} points
+            </span>
+          )}
           <span className="text-muted-foreground">
             {correctCount} of {total} correct
+            {partialCount > 0 && <> · <span className="text-amber-600">{partialCount} partly right</span></>}
             {wrongCount > 0 && <> · <span className="text-red-600">{wrongCount} wrong</span></>}
             {skippedCount > 0 && <> · <span className="text-amber-600">{skippedCount} skipped</span></>}
           </span>
         </div>
+        {showPoints && (
+          <p className="text-xs text-muted-foreground">Scored with {SCORING_LABELS[method].name}.</p>
+        )}
       </header>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -151,7 +182,14 @@ export default function Results({
 
       <div className="space-y-3">
         {questions.map((q, i) => (
-          <QuestionResult key={q.id} question={q} index={i} answer={q.answer} />
+          <QuestionResult
+            key={q.id}
+            question={q}
+            index={i}
+            answer={q.answer}
+            fraction={fractions[i]}
+            showPoints={showPoints}
+          />
         ))}
       </div>
     </div>
@@ -162,12 +200,20 @@ function QuestionResult({
   question,
   index,
   answer,
+  fraction,
+  showPoints,
 }: {
   question: Question;
   index: number;
   answer: Answer | null;
+  /** Share of this question's max earned, 0..1. */
+  fraction: number;
+  /** Show "x/10" (any method but all-or-nothing). */
+  showPoints: boolean;
 }) {
   const isCorrect = answer?.isCorrect ?? false;
+  const isPartial = !isCorrect && fraction > 0;
+  const pts = showPoints ? ` · ${toPoints(fraction)}/10` : "";
   const userAnswer = answer?.userAnswer ?? null;
   const isSkipped = userAnswer === null || userAnswer === undefined;
   const correct = question.correctAnswer;
@@ -185,7 +231,8 @@ function QuestionResult({
   return (
     <Card className={cn(
       isSkipped && "border-amber-500/40",
-      !isCorrect && !isSkipped && "border-red-500/30",
+      isPartial && "border-amber-500/40",
+      !isCorrect && !isPartial && !isSkipped && "border-red-500/30",
     )}>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
@@ -199,7 +246,11 @@ function QuestionResult({
           </div>
           {isCorrect ? (
             <Badge variant="default" className="shrink-0">
-              <Check className="h-3 w-3" /> Correct
+              <Check className="h-3 w-3" /> Correct{pts}
+            </Badge>
+          ) : isPartial ? (
+            <Badge variant="outline" className="shrink-0 border-amber-500 text-amber-700">
+              <CircleDot className="h-3 w-3" /> Partly right{pts}
             </Badge>
           ) : isSkipped ? (
             <Badge variant="outline" className="shrink-0 border-amber-500 text-amber-600">
@@ -207,7 +258,7 @@ function QuestionResult({
             </Badge>
           ) : (
             <Badge variant="destructive" className="shrink-0">
-              <X className="h-3 w-3" /> Wrong
+              <X className="h-3 w-3" /> Wrong{pts}
             </Badge>
           )}
         </div>

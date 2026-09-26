@@ -5,10 +5,11 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Check, Loader2, NotebookPen, X } from "lucide-react";
+import { Check, CircleDot, Loader2, NotebookPen, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { Question } from "@/types";
+import { scoreQuestion, toPoints, type ScoringMethod } from "@/lib/scoring";
 
 /**
  * Renders one question. Supports mcq-single, mcq-multi, and true-false.
@@ -24,6 +25,12 @@ export interface QuestionCardProps {
   revealed: boolean;
   onSelect: (answer: number | number[] | null) => void;
   onSubmit: () => void;
+  /**
+   * How the attempt will be scored. Feedback uses the same shared rule
+   * as the server, so "6/10" here is what the result will say. Omitted =
+   * all-or-nothing (the original right/wrong feedback, no points shown).
+   */
+  scoringMethod?: ScoringMethod;
 }
 
 export function QuestionCard({
@@ -34,6 +41,7 @@ export function QuestionCard({
   revealed,
   onSelect,
   onSubmit,
+  scoringMethod = "all-or-nothing",
 }: QuestionCardProps) {
   const isMulti = question.type === "mcq-multi";
   const correct = question.correctAnswer;
@@ -65,17 +73,12 @@ export function QuestionCard({
     (!Array.isArray(selected) || selected.length > 0) &&
     !revealed;
 
-  // Determine if the user's final answer is correct (used when revealed)
-  const userIsCorrect = (() => {
-    if (selected === null) return false;
-    if (isMulti) {
-      if (!Array.isArray(selected) || !Array.isArray(correct)) return false;
-      if (selected.length !== correct.length) return false;
-      return selected.every((v) => correct.includes(v));
-    }
-    if (typeof selected !== "number" || typeof correct !== "number") return false;
-    return selected === correct;
-  })();
+  // Fraction of the question's max earned (used when revealed) — the
+  // same scoring function the server applies on submit.
+  const earned = scoreQuestion(scoringMethod, question.type, correct, selected, question.options.length);
+  const userIsCorrect = earned === 1;
+  const isPartial = earned > 0 && earned < 1;
+  const showPoints = scoringMethod !== "all-or-nothing";
 
   return (
     <Card>
@@ -151,7 +154,9 @@ export function QuestionCard({
                 "rounded-md border p-3 text-sm",
                 userIsCorrect
                   ? "border-green-600/40 bg-green-500/10"
-                  : "border-red-600/40 bg-red-500/10",
+                  : isPartial
+                    ? "border-amber-600/40 bg-amber-500/10"
+                    : "border-red-600/40 bg-red-500/10",
               )}
             >
               <div className="flex items-center gap-2 font-medium mb-1">
@@ -159,10 +164,17 @@ export function QuestionCard({
                   <>
                     <Check className="h-4 w-4 text-green-600" /> Correct
                   </>
+                ) : isPartial ? (
+                  <>
+                    <CircleDot className="h-4 w-4 text-amber-600" /> Partly right
+                  </>
                 ) : (
                   <>
                     <X className="h-4 w-4 text-red-600" /> Not quite
                   </>
+                )}
+                {showPoints && (
+                  <span className="ml-auto tabular-nums">{toPoints(earned)} / 10 points</span>
                 )}
               </div>
               <p className="text-sm text-muted-foreground">{question.explanation}</p>

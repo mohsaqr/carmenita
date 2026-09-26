@@ -3,6 +3,16 @@ import { and, eq, isNull, asc } from "drizzle-orm";
 import { db } from "@/db/client";
 import { quizzes, questions, quizQuestions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
+import { z } from "zod";
+import { getSetting } from "@/lib/settings-store";
+import { rescoreAttempts } from "@/lib/rescore";
+import {
+  isScoringMethod,
+  resolveScoringMethod,
+  SCORING_METHODS,
+  SCORING_SETTING_KEY,
+  SERVER_DEFAULT_SCORING,
+} from "@/lib/scoring";
 
 /**
  * GET /api/quizzes/[id] — fetch a quiz with all its questions in order.
@@ -61,7 +71,73 @@ export async function GET(
     .orderBy(asc(quizQuestions.idx))
     .all();
 
-  return NextResponse.json({ quiz, questions: questionRows });
+  // Effective scoring method (quiz override > account default > UMCH),
+  // so the runner's feedback matches what the submit will score.
+  const accountDefault = getSetting(userId, SCORING_SETTING_KEY);
+  const scoring = {
+    method: resolveScoringMethod(quiz.settings?.scoringMethod, accountDefault, SERVER_DEFAULT_SCORING),
+    override: isScoringMethod(quiz.settings?.scoringMethod) ? quiz.settings.scoringMethod : null,
+    accountDefault: resolveScoringMethod(null, accountDefault, SERVER_DEFAULT_SCORING),
+  };
+
+  return NextResponse.json({ quiz, questions: questionRows, scoring });
+}
+
+const PatchSchema = z.object({
+  // A method overrides the account default for this quiz; null clears it.
+  scoringMethod: z.enum(SCORING_METHODS).nullable(),
+});
+
+/**
+ * PATCH /api/quizzes/[id] — body { scoringMethod: <method> | null }
+ * Sets (or clears, with null) this quiz's scoring override and re-scores
+ * this quiz's finished attempts with it. Returns { scoring, rescored }.
+ */
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
+  const { id } = await context.params;
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const parsed = PatchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Unknown scoring method" }, { status: 400 });
+  }
+  const quiz = db
+    .select({ settings: quizzes.settings })
+    .from(quizzes)
+    .where(and(eq(quizzes.id, id), isNull(quizzes.deletedAt), eq(quizzes.userId, userId)))
+    .get();
+  if (!quiz) return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
+
+  const settings = { ...quiz.settings };
+  if (parsed.data.scoringMethod === null) delete settings.scoringMethod;
+  else settings.scoringMethod = parsed.data.scoringMethod;
+  db.update(quizzes)
+    .set({ settings })
+    .where(and(eq(quizzes.id, id), eq(quizzes.userId, userId)))
+    .run();
+
+  // This quiz's past attempts follow the new method too.
+  const rescored = rescoreAttempts(userId, { quizId: id });
+
+  const accountDefault = getSetting(userId, SCORING_SETTING_KEY);
+  return NextResponse.json({
+    rescored,
+    scoring: {
+      method: resolveScoringMethod(settings.scoringMethod, accountDefault, SERVER_DEFAULT_SCORING),
+      override: parsed.data.scoringMethod,
+      accountDefault: resolveScoringMethod(null, accountDefault, SERVER_DEFAULT_SCORING),
+    },
+  });
 }
 
 /**

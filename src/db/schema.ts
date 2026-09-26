@@ -34,6 +34,12 @@ export interface QuizSettings {
   allowedTypes: QuestionType[];
   difficultyMix?: Partial<Record<Difficulty, number>>;
   immediateFeedback: boolean;
+  /**
+   * Per-quiz override of the account's scoring method
+   * ("umch" | "partial" | "cancelling" | "all-or-nothing"). Absent =
+   * use the account default from Settings.
+   */
+  scoringMethod?: string;
 }
 
 export const quizzes = sqliteTable(
@@ -234,6 +240,9 @@ export const attempts = sqliteTable(
     startedAt: text("started_at").notNull(),
     completedAt: text("completed_at"),
     score: real("score"),
+    // Method this attempt was scored with (src/lib/scoring.ts). NULL on
+    // attempts from before scoring methods existed = all-or-nothing.
+    scoringMethod: text("scoring_method"),
     userId: text("user_id"),
   },
   (t) => ({
@@ -257,7 +266,12 @@ export const answers = sqliteTable(
       .notNull()
       .references(() => questions.id, { onDelete: "cascade" }),
     userAnswer: text("user_answer", { mode: "json" }).$type<number | number[] | null>(),
+    // True only for full marks (keeps "needs review" / breakdowns meaning
+    // "answered exactly right").
     isCorrect: integer("is_correct", { mode: "boolean" }).notNull(),
+    // Fraction of the question's max earned, 0..1 (shown as points /10).
+    // NULL on older answers = derive from isCorrect (1 or 0).
+    points: real("points"),
     timeMs: integer("time_ms").notNull(),
   },
   (t) => ({
