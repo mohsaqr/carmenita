@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { GraduationCap, LogOut, Menu, User } from "lucide-react";
+import { GraduationCap, KeyRound, LogOut, Menu, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 
 interface AppHeaderProps {
   onMenuClick: () => void;
@@ -11,23 +13,8 @@ interface AppHeaderProps {
 
 export function AppHeader({ onMenuClick }: AppHeaderProps) {
   // Null when signed out or in the static build (no /api/auth there).
-  const [username, setUsername] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/auth/me")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!cancelled && data?.user?.username) setUsername(data.user.username);
-      })
-      .catch(() => {
-        // Network failure: leave the user badge hidden; the proxy
-        // still enforces auth on the next navigation.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const username = useCurrentUser()?.username ?? null;
+  const [passwordOpen, setPasswordOpen] = useState(false);
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -58,12 +45,17 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
             <User className="h-4 w-4" />
             {username}
           </span>
+          <Button variant="ghost" size="sm" onClick={() => setPasswordOpen(true)} title="Change password">
+            <KeyRound className="h-4 w-4" />
+            <span className="hidden sm:inline">Change password</span>
+          </Button>
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             <LogOut className="h-4 w-4" />
             Sign out
           </Button>
         </div>
       )}
+      <ChangePasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
     </header>
   );
 }

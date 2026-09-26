@@ -14,9 +14,11 @@ import {
   Trash2,
   Settings,
   GraduationCap,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 const PRIMARY_LINKS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -40,6 +42,11 @@ interface AppSidebarProps {
 
 export function AppSidebar({ open, onClose }: AppSidebarProps) {
   const pathname = usePathname();
+  // Admins also get the Users page (create accounts, reset passwords).
+  const isAdmin = useCurrentUser()?.isAdmin ?? false;
+  const manageLinks = isAdmin
+    ? [...SECONDARY_LINKS, { href: "/users", label: "Users", icon: Users }]
+    : SECONDARY_LINKS;
   const panelRef = useRef<HTMLElement>(null);
 
   // Mobile overlay: Escape key dismiss + body scroll lock + focus on open
@@ -101,7 +108,7 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
           <span className="px-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/40">
             Manage
           </span>
-          {SECONDARY_LINKS.map((link) => {
+          {manageLinks.map((link) => {
             const active = isActive(link.href);
             const Icon = link.icon;
             return (

@@ -277,6 +277,9 @@ export const users = sqliteTable("users", {
   username: text("username").notNull(),
   usernameKey: text("username_key").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  // Admins can create accounts and reset passwords from /users.
+  // The first account is made admin (migration 0008 / create-user.mjs).
+  isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
 });
 

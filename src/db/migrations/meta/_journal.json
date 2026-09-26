@@ -57,6 +57,13 @@
       "when": 1790447775746,
       "tag": "0007_per_user_banks",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790450419040,
+      "tag": "0008_user_admin_flag",
+      "breakpoints": true
     }
   ]
 }
