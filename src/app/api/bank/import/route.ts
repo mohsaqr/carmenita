@@ -7,14 +7,17 @@ import { parseGift } from "@/lib/formats/gift";
 import { parseAiken } from "@/lib/formats/aiken";
 import { parseMarkdown } from "@/lib/formats/markdown";
 import type { QuestionSource } from "@/db/schema";
+import { findOrCreateSet } from "@/lib/question-sets";
 
 /**
  * POST /api/bank/import
- * Body: { format: "gift" | "aiken" | "markdown", text, sourceLabel? }
+ * Body: { format: "gift" | "aiken" | "markdown", text, setName, folder? }
  *
  * Parses the text into PortableQuestions and inserts them into the
- * bank with source_type = "gift-import" | "aiken-import" | "markdown-import".
- * Returns how many were imported, how many were skipped, and any warnings.
+ * bank with source_type = "gift-import" | "aiken-import" | "markdown-import",
+ * inside the named set (created, or appended to when a set with the
+ * same name already exists in the same folder).
+ * Returns { imported, warnings, ids, setId, setCreated }.
  */
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -32,7 +35,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { format, text, sourceLabel } = parsed.data;
+  const { format, text, setName, folder } = parsed.data;
 
   const result =
     format === "gift"
@@ -81,16 +84,26 @@ export async function POST(req: NextRequest) {
     sourcePassage: q.sourcePassage,
     sourceType,
     sourceDocumentId: null,
-    sourceLabel: sourceLabel ?? null,
+    sourceLabel: setName,
     createdAt: new Date(baseTime + (total - 1 - i)).toISOString(),
     userId: null,
   }));
 
-  db.insert(questions).values(rows).run();
+  // better-sqlite3 transactions are synchronous: the set is only kept
+  // if the question insert succeeds too.
+  const set = db.transaction(() => {
+    const target = findOrCreateSet(setName, folder);
+    db.insert(questions)
+      .values(rows.map((r) => ({ ...r, setId: target.id })))
+      .run();
+    return target;
+  });
 
   return NextResponse.json({
     imported: rows.length,
     warnings,
     ids: rows.map((r) => r.id),
+    setId: set.id,
+    setCreated: set.created,
   });
 }

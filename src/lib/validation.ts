@@ -213,8 +213,20 @@ export const SubmitAttemptSchema = z.object({
 export const BankImportSchema = z.object({
   format: z.enum(["gift", "aiken", "markdown"]),
   text: z.string().min(1).max(5_000_000), // 5 MB cap
-  sourceLabel: z.string().min(1).max(512).optional(),
+  // Every import is a named set. Required: unnamed imports were
+  // impossible to find or delete later.
+  setName: z.string().trim().min(1, "Give this set a name").max(200),
+  folder: z.string().trim().max(200).nullable().optional(),
 });
+
+export const UpdateSetSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200).optional(),
+    folder: z.string().trim().max(200).nullable().optional(),
+  })
+  .refine((v) => v.name !== undefined || v.folder !== undefined, {
+    message: "Provide name and/or folder",
+  });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /api/bank/quiz-from-questions — build a quiz by selecting bank questions
@@ -329,6 +341,7 @@ export type GenerateFromTopicBody = z.infer<typeof GenerateFromTopicSchema>;
 export type CreateAttemptBody = z.infer<typeof CreateAttemptSchema>;
 export type SubmitAttemptBody = z.infer<typeof SubmitAttemptSchema>;
 export type BankImportBody = z.infer<typeof BankImportSchema>;
+export type UpdateSetBody = z.infer<typeof UpdateSetSchema>;
 export type CreateQuizFromBankBody = z.infer<typeof CreateQuizFromBankSchema>;
 export type GenerateVariationsBody = z.infer<typeof GenerateVariationsSchema>;
 export type BulkTagBody = z.infer<typeof BulkTagSchema>;

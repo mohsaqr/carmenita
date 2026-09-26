@@ -79,6 +79,12 @@ cd "${APP_DIR}"
 rm -rf node_modules
 
 npm install --no-audit --no-fund
+# carmenita.db is live data and is NOT in git. A fresh install starts from
+# the committed seed (question bank, no accounts); an existing DB is kept.
+if [ ! -f carmenita.db ] && [ -f seed/carmenita.seed.db ]; then
+  cp seed/carmenita.seed.db carmenita.db
+  echo "  Initialised carmenita.db from seed/carmenita.seed.db"
+fi
 npm run db:migrate
 npm run build
 
@@ -133,6 +139,15 @@ exec >> "\$LOG" 2>&1
 echo ""
 echo "=== Deploy started: \$(date) ==="
 cd ${APP_DIR}
+# Back up the live DB (accounts, API keys, imports) before touching the
+# checkout. SQLite's online backup is WAL-safe while the app is running
+# (uses the app's own better-sqlite3, before node_modules is wiped).
+# Under set -e a failed backup aborts the deploy BEFORE the pull. Keep 10.
+if [ -f carmenita.db ]; then
+  mkdir -p ${DEPLOY_DIR}/db-backups
+  node -e "require('better-sqlite3')('carmenita.db', { readonly: true }).backup(process.argv[1]).then(() => console.log('DB backed up to ' + process.argv[1]))" "${DEPLOY_DIR}/db-backups/carmenita-\$(date +%Y%m%d-%H%M%S).db"
+  ls -1t ${DEPLOY_DIR}/db-backups/*.db | tail -n +11 | xargs -r rm -f
+fi
 git pull origin main
 rm -rf node_modules
 npm install --no-audit --no-fund
@@ -242,6 +257,9 @@ echo "    2. Payload URL: http://${SERVER_IP}:${WEBHOOK_PORT}/hooks/redeploy"
 echo "    3. Content type: application/json"
 echo "    4. Secret: ${WEBHOOK_SECRET}"
 echo "    5. Events: Just pushes"
+echo ""
+echo "  Create a login (required — every page needs sign-in):"
+echo "    cd ${APP_DIR} && node scripts/create-user.mjs <username>"
 echo ""
 echo "  Logs:"
 echo "    App:    sudo journalctl -u carmenita -f"

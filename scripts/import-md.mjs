@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
  * Import a Carmenita-format Markdown file directly into the database.
- * Usage: node scripts/import-md.mjs path/to/file.md [sourceLabel]
+ * Usage: node scripts/import-md.mjs path/to/file.md "<set name>" [folder]
+ *
+ * Questions go into the named set (created if needed; an existing set
+ * with the same name in the same folder is appended to).
  */
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -81,10 +84,11 @@ function parseMarkdownMinimal(text) {
 // ── Main ────────────────────────────────────────────────────────────
 
 const mdPath = process.argv[2];
-const sourceLabel = process.argv[3] || null;
+const setName = (process.argv[3] || "").trim();
+const folder = (process.argv[4] || "").trim() || null;
 
-if (!mdPath) {
-  console.error("Usage: node scripts/import-md.mjs <file.md> [sourceLabel]");
+if (!mdPath || !setName) {
+  console.error('Usage: node scripts/import-md.mjs <file.md> "<set name>" [folder]');
   process.exit(1);
 }
 
@@ -112,12 +116,26 @@ const insert = db.prepare(`
     (id, type, question, options, correct_answer, explanation,
      difficulty, bloom_level, subject, lesson, topic, tags,
      source_passage, source_type, source_document_id, source_label,
-     notes, parent_question_id, variation_type, created_at, user_id)
+     set_id, notes, parent_question_id, variation_type, created_at, user_id)
   VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'markdown-import', NULL, ?, NULL, NULL, NULL, ?, NULL)
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'markdown-import', NULL, ?, ?, NULL, NULL, NULL, ?, NULL)
 `);
 
+// Find or create the target set (same matching rules as the app:
+// case-insensitive name within the same folder).
+function findOrCreateSet() {
+  const existing = folder === null
+    ? db.prepare("SELECT id FROM question_sets WHERE lower(name) = lower(?) AND folder IS NULL").get(setName)
+    : db.prepare("SELECT id FROM question_sets WHERE lower(name) = lower(?) AND lower(folder) = lower(?)").get(setName, folder);
+  if (existing) return existing.id;
+  const id = randomUUID();
+  db.prepare("INSERT INTO question_sets (id, name, folder, created_at, user_id) VALUES (?, ?, ?, ?, NULL)")
+    .run(id, setName, folder, new Date().toISOString());
+  return id;
+}
+
 const tx = db.transaction(() => {
+  const setId = findOrCreateSet();
   for (let i = 0; i < total; i++) {
     const q = questions[i];
     insert.run(
@@ -134,7 +152,8 @@ const tx = db.transaction(() => {
       q.topic.trim().toLowerCase(),
       JSON.stringify(q.tags),
       q.sourcePassage,
-      sourceLabel,
+      setName,
+      setId,
       new Date(baseTime + (total - 1 - i)).toISOString(),
     );
   }
@@ -142,4 +161,4 @@ const tx = db.transaction(() => {
 
 tx();
 db.close();
-console.log(`Imported ${total} questions into carmenita.db`);
+console.log(`Imported ${total} questions into set "${setName}"${folder ? ` (folder: ${folder})` : ""}`);

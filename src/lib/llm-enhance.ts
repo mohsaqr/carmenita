@@ -35,8 +35,10 @@ const ExplanationResponseSchema = z.object({
  * verify the prompt contains the right substrings without mocking the
  * LLM call. `generateExplanation` uses this internally.
  */
-export function buildExplanationPrompt(question: Question): string {
-  const template = getPrompt("carmenita.feedback.add");
+export function buildExplanationPrompt(
+  question: Question,
+  template: string = getPrompt("carmenita.feedback.add"),
+): string {
   const correctAnswerText = describeCorrectAnswer(
     question.options,
     question.correctAnswer,
@@ -61,6 +63,7 @@ export async function generateExplanation(
   question: Question,
   provider: ProviderConfig,
   temperature?: number,
+  template?: string,
 ): Promise<string> {
   assertProvider(provider);
   const model = getModel(
@@ -70,7 +73,7 @@ export async function generateExplanation(
     provider.baseUrl,
   );
 
-  const systemPrompt = buildExplanationPrompt(question);
+  const systemPrompt = buildExplanationPrompt(question, template);
 
   const { text: raw } = await withRetry(
     () =>
@@ -116,8 +119,10 @@ export interface GeneratedTagging {
 /**
  * Pure prompt builder for the tagging flow. Exposed for unit tests.
  */
-export function buildTaggingPrompt(question: Question): string {
-  const template = getPrompt("carmenita.tag.add");
+export function buildTaggingPrompt(
+  question: Question,
+  template: string = getPrompt("carmenita.tag.add"),
+): string {
   const correctAnswerText = describeCorrectAnswer(
     question.options,
     question.correctAnswer,
@@ -143,6 +148,7 @@ export async function generateTagging(
   question: Question,
   provider: ProviderConfig,
   temperature?: number,
+  template?: string,
 ): Promise<GeneratedTagging> {
   assertProvider(provider);
   const model = getModel(
@@ -152,7 +158,7 @@ export async function generateTagging(
     provider.baseUrl,
   );
 
-  const systemPrompt = buildTaggingPrompt(question);
+  const systemPrompt = buildTaggingPrompt(question, template);
 
   const { text: raw } = await withRetry(
     () =>

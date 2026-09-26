@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { GenerateFromTopicSchema } from "@/lib/validation";
 import { generateQuestionsFromTopic } from "@/lib/llm-topic";
 import { insertQuizAndQuestions } from "@/lib/db-helpers";
+import { getUserFromRequest } from "@/lib/auth";
+import { resolvePrompt } from "@/lib/settings-store";
 
 /**
  * POST /api/generate-from-topic
@@ -73,7 +75,9 @@ export async function POST(req: NextRequest) {
       difficultyMix: settings.difficultyMix,
       provider,
       temperature,
-      systemPromptOverride,
+      systemPromptOverride:
+        systemPromptOverride ??
+        resolvePrompt(getUserFromRequest(req)?.id, "carmenita.mcq.topic"),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown generation error";

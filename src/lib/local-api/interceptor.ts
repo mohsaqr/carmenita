@@ -20,23 +20,31 @@ import {
   analyticsOverview,
   analyticsSlowest,
   analyticsTopics,
+  bulkDeleteQuestions,
   createAttempt,
+  deleteQuestion,
+  deleteSet,
+  deleteSettingValue,
   exportBank,
   getAttempt,
   getQuiz,
+  getSettingValue,
   getTaxonomy,
   importBank,
   listAttempts,
   listBankQuestions,
   listQuizzes,
+  listSets,
   listTrash,
   needsReview,
   permanentDeleteTrash,
+  putSettingValue,
   quickQuiz,
   restoreTrash,
   softDeleteQuiz,
   submitAttempt,
   updateQuestion,
+  updateSet,
 } from "./handlers";
 
 type HandlerResult = {
@@ -172,6 +180,16 @@ async function route(req: Request): Promise<Response | null> {
     return methodNotAllowed(pathname, method);
   }
 
+  // /api/bank/questions/bulk-delete — must precede the /:id branch,
+  // which has the same segment count.
+  if (segs[0] === "bank" && segs[1] === "questions" && segs[2] === "bulk-delete" && segs.length === 3) {
+    if (method === "POST") {
+      const body = (await parseJson(req)) as { ids?: unknown };
+      return json(await bulkDeleteQuestions(body));
+    }
+    return methodNotAllowed(pathname, method);
+  }
+
   // /api/bank/questions/:id
   if (segs[0] === "bank" && segs[1] === "questions" && segs.length === 3) {
     const id = segs[2];
@@ -179,6 +197,36 @@ async function route(req: Request): Promise<Response | null> {
       const body = (await parseJson(req)) as { notes?: string | null };
       return json(await updateQuestion(id, body));
     }
+    if (method === "DELETE") return json(await deleteQuestion(id));
+    return methodNotAllowed(pathname, method);
+  }
+
+  // /api/bank/sets
+  if (segs[0] === "bank" && segs[1] === "sets" && segs.length === 2) {
+    if (method === "GET") return json({ body: listSets() });
+    return methodNotAllowed(pathname, method);
+  }
+
+  // /api/bank/sets/:id
+  if (segs[0] === "bank" && segs[1] === "sets" && segs.length === 3) {
+    const id = segs[2];
+    if (method === "PATCH") {
+      const body = (await parseJson(req)) as { name?: unknown; folder?: unknown };
+      return json(await updateSet(id, body));
+    }
+    if (method === "DELETE") return json(await deleteSet(id));
+    return methodNotAllowed(pathname, method);
+  }
+
+  // /api/settings/:key
+  if (segs[0] === "settings" && segs.length === 2) {
+    const key = decodeURIComponent(segs[1]);
+    if (method === "GET") return json(getSettingValue(key));
+    if (method === "PUT") {
+      const body = (await parseJson(req)) as { value?: unknown };
+      return json(await putSettingValue(key, body));
+    }
+    if (method === "DELETE") return json(await deleteSettingValue(key));
     return methodNotAllowed(pathname, method);
   }
 
@@ -202,7 +250,8 @@ async function route(req: Request): Promise<Response | null> {
       const body = (await parseJson(req)) as {
         format: string;
         text: string;
-        sourceLabel?: string;
+        setName?: string;
+        folder?: string | null;
       };
       return json(await importBank(body));
     }

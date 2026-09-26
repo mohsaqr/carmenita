@@ -448,6 +448,10 @@ export function listBankQuestions(url: URL) {
     const t = (sp.get("tag") || "").replace(/"/g, '\\"');
     push(`tags LIKE ?`, `%"${t}"%`);
   }
+  if (sp.get("setId")) push("set_id = ?", sp.get("setId"));
+  if (sp.get("folder")) {
+    push("set_id IN (SELECT id FROM question_sets WHERE folder = ?)", sp.get("folder"));
+  }
   const idsCsv = sp.get("ids");
   if (idsCsv) {
     const ids = idsCsv.split(",").map((s) => s.trim()).filter(Boolean);
@@ -482,6 +486,7 @@ export function listBankQuestions(url: URL) {
       sourceType: r.source_type,
       sourceDocumentId: r.source_document_id,
       sourceLabel: r.source_label,
+      setId: r.set_id ?? null,
       notes: r.notes,
       parentQuestionId: r.parent_question_id,
       variationType: r.variation_type,
@@ -768,9 +773,14 @@ export async function permanentDeleteTrash(id: string) {
 export async function importBank(body: {
   format: string;
   text: string;
-  sourceLabel?: string;
+  setName?: string;
+  folder?: string | null;
 }) {
-  const { format, text, sourceLabel } = body;
+  const { format, text } = body;
+  const setName = (body.setName ?? "").trim();
+  if (!setName) {
+    return { status: 400, body: { error: "Give this set a name" } };
+  }
   if (format !== "gift" && format !== "aiken" && format !== "markdown") {
     return {
       status: 400,
@@ -805,8 +815,10 @@ export async function importBank(body: {
         : "markdown-import";
 
   const ids: string[] = [];
+  let set: { id: string; created: boolean };
   run("BEGIN");
   try {
+    set = findOrCreateLocalSet(setName, body.folder);
     result.questions.forEach((q, i) => {
       const id = uuid();
       ids.push(id);
@@ -817,8 +829,8 @@ export async function importBank(body: {
            (id, type, question, options, correct_answer, explanation,
             difficulty, bloom_level, subject, lesson, topic, tags,
             source_passage, source_type, source_document_id, source_label,
-            notes, parent_question_id, variation_type, created_at, user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL)`,
+            set_id, notes, parent_question_id, variation_type, created_at, user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, ?, NULL)`,
         [
           id,
           q.type,
@@ -834,7 +846,8 @@ export async function importBank(body: {
           JSON.stringify(q.tags),
           q.sourcePassage,
           sourceType,
-          sourceLabel ?? null,
+          setName,
+          set.id,
           createdAt,
         ],
       );
@@ -847,7 +860,13 @@ export async function importBank(body: {
   await flushLocalDb();
 
   return {
-    body: { imported: ids.length, warnings: result.warnings, ids },
+    body: {
+      imported: ids.length,
+      warnings: result.warnings,
+      ids,
+      setId: set.id,
+      setCreated: set.created,
+    },
   };
 }
 
@@ -947,4 +966,158 @@ export function exportBank(url: URL) {
     skipped: skippedHeader,
     exported: rows.length,
   };
+}
+
+// ── Question deletion (single + bulk) ───────────────────────────────────
+//
+// sql.js copies may not have foreign_keys enabled, so child rows
+// (answers, quiz links) are removed explicitly rather than relying on
+// ON DELETE CASCADE as the server build does.
+
+function deleteQuestionRows(ids: string[]): number {
+  if (ids.length === 0) return 0;
+  const marks = ids.map(() => "?").join(",");
+  run(`DELETE FROM answers WHERE question_id IN (${marks})`, ids);
+  run(`DELETE FROM quiz_questions WHERE question_id IN (${marks})`, ids);
+  run(`UPDATE questions SET parent_question_id = NULL WHERE parent_question_id IN (${marks})`, ids);
+  return run(`DELETE FROM questions WHERE id IN (${marks})`, ids);
+}
+
+function inTransaction<T>(fn: () => T): T {
+  run("BEGIN");
+  try {
+    const out = fn();
+    run("COMMIT");
+    return out;
+  } catch (err) {
+    run("ROLLBACK");
+    throw err;
+  }
+}
+
+export async function deleteQuestion(id: string) {
+  const deleted = inTransaction(() => deleteQuestionRows([id]));
+  if (deleted === 0) return { status: 404, body: { error: "Question not found" } };
+  await flushLocalDb();
+  return { body: { deleted: id } };
+}
+
+export async function bulkDeleteQuestions(body: { ids?: unknown }) {
+  const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === "string") : [];
+  if (ids.length === 0) return { status: 400, body: { error: "ids must be a non-empty array" } };
+  const deleted = inTransaction(() => deleteQuestionRows(ids));
+  await flushLocalDb();
+  return { body: { deleted, requested: ids.length } };
+}
+
+// ── /api/bank/sets ──────────────────────────────────────────────────────
+
+function normalizeFolder(folder: unknown): string | null {
+  const f = typeof folder === "string" ? folder.trim() : "";
+  return f ? f : null;
+}
+
+function findOrCreateLocalSet(name: string, folder: unknown): { id: string; created: boolean } {
+  const f = normalizeFolder(folder);
+  const existing = queryOne<{ id: string }>(
+    f === null
+      ? `SELECT id FROM question_sets WHERE lower(name) = lower(?) AND folder IS NULL`
+      : `SELECT id FROM question_sets WHERE lower(name) = lower(?) AND lower(folder) = lower(?)`,
+    f === null ? [name] : [name, f],
+  );
+  if (existing) return { id: existing.id, created: false };
+  const id = uuid();
+  run(
+    `INSERT INTO question_sets (id, name, folder, created_at, user_id) VALUES (?, ?, ?, ?, NULL)`,
+    [id, name, f, nowIso()],
+  );
+  return { id, created: true };
+}
+
+export function listSets() {
+  const rows = queryAll<Record<string, unknown>>(
+    `SELECT s.id, s.name, s.folder, s.created_at, COUNT(q.id) AS n
+       FROM question_sets s LEFT JOIN questions q ON q.set_id = s.id
+      GROUP BY s.id
+      ORDER BY s.folder IS NULL, lower(s.folder), lower(s.name), s.created_at`,
+  );
+  return {
+    sets: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      folder: r.folder ?? null,
+      createdAt: r.created_at,
+      questionCount: Number(r.n),
+    })),
+  };
+}
+
+export async function updateSet(id: string, body: { name?: unknown; folder?: unknown }) {
+  const sets: string[] = [];
+  const params: Array<string | null> = [];
+  if (body.name !== undefined) {
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return { status: 400, body: { error: "Set name must not be empty" } };
+    sets.push("name = ?");
+    params.push(name);
+  }
+  if (body.folder !== undefined) {
+    sets.push("folder = ?");
+    params.push(normalizeFolder(body.folder));
+  }
+  if (sets.length === 0) return { status: 400, body: { error: "Provide name and/or folder" } };
+  const changes = run(`UPDATE question_sets SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
+  if (changes === 0) return { status: 404, body: { error: "Set not found" } };
+  if (typeof body.name === "string") {
+    run(`UPDATE questions SET source_label = ? WHERE set_id = ?`, [body.name.trim(), id]);
+  }
+  await flushLocalDb();
+  const set = listSets().sets.find((x) => x.id === id);
+  return { body: { set } };
+}
+
+export async function deleteSet(id: string) {
+  const result = inTransaction(() => {
+    const ids = queryAll<{ id: string }>(`SELECT id FROM questions WHERE set_id = ?`, [id]).map((r) => r.id);
+    const questionsDeleted = deleteQuestionRows(ids);
+    const setsDeleted = run(`DELETE FROM question_sets WHERE id = ?`, [id]);
+    return { questionsDeleted, setsDeleted };
+  });
+  if (result.setsDeleted === 0) return { status: 404, body: { error: "Set not found" } };
+  await flushLocalDb();
+  return { body: { deleted: id, questionsDeleted: result.questionsDeleted } };
+}
+
+// ── /api/settings ───────────────────────────────────────────────────────
+//
+// The static build has no accounts; everything is stored under one
+// local user id in this browser's sql.js DB.
+
+const LOCAL_USER = "local";
+
+export function getSettingValue(key: string) {
+  const row = queryOne<{ value: string }>(
+    `SELECT value FROM app_settings WHERE user_id = ? AND key = ?`,
+    [LOCAL_USER, key],
+  );
+  return { body: { value: row ? jsonParse<unknown>(row.value, null) : null } };
+}
+
+export async function putSettingValue(key: string, body: { value?: unknown }) {
+  if (body.value === undefined || body.value === null) {
+    return { status: 400, body: { error: "Use DELETE to clear a setting" } };
+  }
+  run(
+    `INSERT INTO app_settings (user_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    [LOCAL_USER, key, JSON.stringify(body.value), nowIso()],
+  );
+  await flushLocalDb();
+  return { body: { ok: true } };
+}
+
+export async function deleteSettingValue(key: string) {
+  run(`DELETE FROM app_settings WHERE user_id = ? AND key = ?`, [LOCAL_USER, key]);
+  await flushLocalDb();
+  return { body: { ok: true } };
 }

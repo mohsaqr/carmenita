@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, like } from "drizzle-orm";
 import { db } from "@/db/client";
-import { questions } from "@/db/schema";
+import { questionSets, questions } from "@/db/schema";
 import { CreateQuestionSchema } from "@/lib/validation";
 
 /**
@@ -15,6 +15,8 @@ import { CreateQuestionSchema } from "@/lib/validation";
  *   ?bloomLevel=analyze        — filter by Bloom level
  *   ?sourceType=gift-import    — filter by provenance
  *   ?ids=id1,id2,id3           — fetch specific questions (used by export)
+ *   ?setId=<id>                — only questions in one set
+ *   ?folder=pathology          — only questions in sets filed in that folder
  *   ?limit=200&offset=0        — pagination (default limit 500)
  *
  * Returns: { questions: Question[], total: number }
@@ -47,6 +49,8 @@ export async function GET(req: NextRequest) {
     | "variation"
     | null;
   const idsCsv = sp.get("ids");
+  const setId = sp.get("setId");
+  const folder = sp.get("folder");
   const limit = Math.min(parseInt(sp.get("limit") || "500", 10) || 500, 2000);
 
   const conditions = [];
@@ -64,6 +68,15 @@ export async function GET(req: NextRequest) {
   if (difficulty) conditions.push(eq(questions.difficulty, difficulty));
   if (bloomLevel) conditions.push(eq(questions.bloomLevel, bloomLevel));
   if (sourceType) conditions.push(eq(questions.sourceType, sourceType));
+  if (setId) conditions.push(eq(questions.setId, setId));
+  if (folder) {
+    conditions.push(
+      inArray(
+        questions.setId,
+        db.select({ id: questionSets.id }).from(questionSets).where(eq(questionSets.folder, folder)),
+      ),
+    );
+  }
   if (idsCsv) {
     const ids = idsCsv.split(",").map((s) => s.trim()).filter(Boolean);
     if (ids.length > 0) conditions.push(inArray(questions.id, ids));

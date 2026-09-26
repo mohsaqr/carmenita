@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Upload } from "lucide-react";
 import { toast } from "sonner";
+import { SetNameFields } from "@/components/SetNameFields";
 
 /**
  * ImportCard — paste-and-import UI for GIFT / Aiken / Markdown MCQ files.
@@ -79,12 +80,17 @@ ANSWER: B`,
 export function ImportCard({ onImported }: ImportCardProps) {
   const [format, setFormat] = useState<ImportFormat>("markdown");
   const [text, setText] = useState("");
-  const [sourceLabel, setSourceLabel] = useState("");
+  const [setName, setSetName] = useState("");
+  const [folder, setFolder] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function handleImport() {
     if (!text.trim()) {
       toast.error("Paste some text first");
+      return;
+    }
+    if (!setName.trim()) {
+      toast.error("Give this set a name first");
       return;
     }
     setBusy(true);
@@ -95,7 +101,8 @@ export function ImportCard({ onImported }: ImportCardProps) {
         body: JSON.stringify({
           format,
           text,
-          sourceLabel: sourceLabel || undefined,
+          setName: setName.trim(),
+          folder: folder.trim() || null,
         }),
       });
       const data = await res.json();
@@ -112,7 +119,7 @@ export function ImportCard({ onImported }: ImportCardProps) {
           (data.warnings?.length > 0 ? ` (${data.warnings.length} warnings)` : ""),
       );
       setText("");
-      setSourceLabel("");
+      setSetName("");
       onImported({
         count: data.imported ?? 0,
         ids: Array.isArray(data.ids) ? data.ids : [],
@@ -128,7 +135,7 @@ export function ImportCard({ onImported }: ImportCardProps) {
   async function handleFile(file: File) {
     const fileText = await file.text();
     setText(fileText);
-    if (!sourceLabel) setSourceLabel(file.name);
+    if (!setName) setSetName(file.name.replace(/\.[^.]+$/, ""));
   }
 
   return (
@@ -163,15 +170,6 @@ export function ImportCard({ onImported }: ImportCardProps) {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 flex-1 min-w-[200px]">
-            <Label htmlFor="source">Source label (optional)</Label>
-            <Input
-              id="source"
-              value={sourceLabel}
-              onChange={(e) => setSourceLabel(e.target.value)}
-              placeholder="e.g. biology-final-2025.gift"
-            />
-          </div>
           <div className="space-y-1.5">
             <Label>Or upload file</Label>
             <Input
@@ -184,6 +182,12 @@ export function ImportCard({ onImported }: ImportCardProps) {
             />
           </div>
         </div>
+        <SetNameFields
+          name={setName}
+          folder={folder}
+          onNameChange={setSetName}
+          onFolderChange={setFolder}
+        />
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -192,7 +196,7 @@ export function ImportCard({ onImported }: ImportCardProps) {
           placeholder={IMPORT_PLACEHOLDERS[format]}
         />
         <div className="flex items-center justify-end">
-          <Button onClick={handleImport} disabled={busy || !text.trim()}>
+          <Button onClick={handleImport} disabled={busy || !text.trim() || !setName.trim()}>
             {busy ? "Importing…" : "Import into bank"}
           </Button>
         </div>

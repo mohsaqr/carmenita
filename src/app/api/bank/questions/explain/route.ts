@@ -4,6 +4,8 @@ import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BankExplainSchema } from "@/lib/validation";
 import { generateExplanation } from "@/lib/llm-enhance";
+import { getUserFromRequest } from "@/lib/auth";
+import { resolvePrompt } from "@/lib/settings-store";
 
 /**
  * POST /api/bank/questions/explain
@@ -48,6 +50,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { ids, provider, temperature, onlyIfMissing = true } = parsed.data;
+  const template = resolvePrompt(getUserFromRequest(req)?.id, "carmenita.feedback.add");
 
   const rows = db
     .select()
@@ -73,7 +76,7 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const explanation = await generateExplanation(row, provider, temperature);
+      const explanation = await generateExplanation(row, provider, temperature, template);
       db.update(questions)
         .set({ explanation })
         .where(inArray(questions.id, [row.id]))

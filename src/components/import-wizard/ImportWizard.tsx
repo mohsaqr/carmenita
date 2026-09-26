@@ -27,7 +27,8 @@ export function ImportWizard() {
     source: "",
   });
   const [importText, setImportText] = useState("");
-  const [importSourceLabel, setImportSourceLabel] = useState("");
+  const [setName, setSetName] = useState("");
+  const [folder, setFolder] = useState("");
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   function handleFormatSelect(f: ChatbotPromptFormat) {
@@ -47,7 +48,8 @@ export function ImportWizard() {
   function handleImportMore() {
     setImportResult(null);
     setImportText("");
-    setImportSourceLabel("");
+    setSetName("");
+    // Folder is kept: consecutive imports usually go in the same folder.
     setStep(0);
   }
 
@@ -72,9 +74,11 @@ export function ImportWizard() {
             metadata={metadata}
             onMetadataChange={(patch) => setMetadata((m) => ({ ...m, ...patch }))}
             importText={importText}
-            importSourceLabel={importSourceLabel}
+            setName={setName}
+            folder={folder}
             onImportTextChange={setImportText}
-            onImportSourceLabelChange={setImportSourceLabel}
+            onSetNameChange={setSetName}
+            onFolderChange={setFolder}
             onImported={handleImported}
           />
           <div className="flex justify-start">

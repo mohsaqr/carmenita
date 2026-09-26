@@ -46,7 +46,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       # `better-sqlite3` is needed at build time for the static-params
-      # helper that enumerates the 14 shipped quiz IDs from carmenita.db.
+      # helper that enumerates the shipped quiz IDs from seed/carmenita.seed.db.
       # `npm install` above already compiles it via node-gyp.
 
       - name: Build static site

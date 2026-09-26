@@ -18,9 +18,11 @@ public/sql-wasm-browser.wasm
 # moved aside during a static export. Cleaned by the trap handler.
 .build-stash/
 
-# Database runtime sidecars (the main carmenita.db file IS committed as seed data;
-# these three are transient files SQLite creates while the DB is open and must
-# never be committed — they change every time the dev server runs).
+# Live database: holds user accounts, sessions and LLM API keys — never
+# commit it. The public seed is seed/carmenita.seed.db (regenerate with
+# `node scripts/make-seed.mjs`, which strips accounts/settings).
+carmenita.db
+# SQLite runtime sidecars.
 carmenita.db-journal
 carmenita.db-wal
 carmenita.db-shm

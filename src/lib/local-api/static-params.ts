@@ -1,5 +1,6 @@
 /**
- * Reads the shipped `carmenita.db` at BUILD time to enumerate all
+ * Reads the shipped seed DB (`seed/carmenita.seed.db`, or
+ * `$CARMENITA_SEED_DB` as exported by build-static.sh) at BUILD time to enumerate all
  * non-soft-deleted quiz IDs. Used by `generateStaticParams()` in
  * dynamic quiz pages under `output: "export"` so Next can emit one
  * static HTML file per real quiz.
@@ -15,7 +16,10 @@ export async function getStaticQuizIds(): Promise<string[]> {
   // Lazy-load better-sqlite3 so this module can be imported from code
   // paths that never actually need it (tree-shaking safety).
   const Database = (await import("better-sqlite3")).default;
-  const dbPath = path.resolve(process.cwd(), "carmenita.db");
+  const dbPath = path.resolve(
+    process.cwd(),
+    process.env.CARMENITA_SEED_DB ?? path.join("seed", "carmenita.seed.db"),
+  );
   try {
     const db = new Database(dbPath, { readonly: true, fileMustExist: true });
     const rows = db

@@ -3,7 +3,7 @@
 # Build Carmenita as a fully static site for GitHub Pages.
 #
 # Next.js refuses to statically export a project that has dynamic server
-# routes, so we physically move `src/app/api/` and `src/middleware.ts`
+# routes, so we physically move `src/app/api/` and `src/proxy.ts`
 # out of the source tree for the duration of the build and restore them
 # afterward. The client-side code then uses `src/lib/local-api/` to
 # intercept `fetch('/api/*')` calls and serve them from sql.js loaded
@@ -20,8 +20,8 @@ cd "$ROOT"
 
 API_SRC="src/app/api"
 API_STASH=".build-stash/api"
-MW_SRC="src/middleware.ts"
-MW_STASH=".build-stash/middleware.ts"
+MW_SRC="src/proxy.ts"
+MW_STASH=".build-stash/proxy.ts"
 
 # Restore stashed files no matter what — even if the build fails.
 restore() {
@@ -50,7 +50,7 @@ if [ -d "$API_SRC" ]; then
   echo "[build-static] stashed $API_SRC"
 fi
 
-# Stash middleware (it wouldn't run on static Pages anyway, and Next
+# Stash the login proxy (it wouldn't run on static Pages anyway, and Next
 # complains if it references server-only request objects).
 if [ -f "$MW_SRC" ]; then
   mv "$MW_SRC" "$MW_STASH"
@@ -59,10 +59,31 @@ fi
 
 # Copy the seed DB into public/ so it's served at /carmenita.db (or
 # /carmenita/carmenita.db under a sub-path). sql.js fetches it at runtime.
-if [ -f "carmenita.db" ]; then
+# Source is the COMMITTED seed (seed/carmenita.seed.db, regenerate with
+# `node scripts/make-seed.mjs`), never the live, gitignored carmenita.db.
+# Override with SEED_DB=path for a one-off build.
+SEED_DB="${SEED_DB:-seed/carmenita.seed.db}"
+export CARMENITA_SEED_DB="$ROOT/$SEED_DB"   # read by static-params.ts
+if [ -f "$SEED_DB" ]; then
   mkdir -p public
-  cp carmenita.db public/carmenita.db
-  echo "[build-static] copied carmenita.db -> public/carmenita.db"
+  cp "$SEED_DB" public/carmenita.db
+  echo "[build-static] copied $SEED_DB -> public/carmenita.db"
+  # Defense in depth: make-seed.mjs already strips these, but an
+  # overridden SEED_DB might not be. app_settings holds LLM API keys.
+  node -e '
+    const Database = require("better-sqlite3");
+    const db = new Database("public/carmenita.db");
+    for (const t of ["sessions", "users", "app_settings"]) {
+      const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?").get("table", t);
+      if (exists) db.prepare(`DELETE FROM ${t}`).run();
+    }
+    db.pragma("journal_mode = DELETE");
+    db.exec("VACUUM");
+    db.close();
+  '
+  echo "[build-static] stripped users/sessions/app_settings from the public seed"
+else
+  echo "[build-static] WARNING: $SEED_DB not found — the site will have no seed data" >&2
 fi
 
 # Copy sql.js WASM blobs into public/ so the sql.js loader can fetch

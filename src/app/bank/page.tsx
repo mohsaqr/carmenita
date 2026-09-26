@@ -35,6 +35,8 @@ import { QuestionRow } from "@/components/QuestionRow";
 import { BankGroupedView } from "@/components/BankGroupedView";
 import { useActiveProvider } from "@/hooks/useActiveProvider";
 import { useAppStore } from "@/lib/store";
+import { SetsPanel, type SetScope } from "@/components/SetsPanel";
+import type { SetSummary } from "@/components/SetNameFields";
 
 /**
  * Question Bank page — list every question across all quizzes, filter,
@@ -67,6 +69,8 @@ function BankPageInner() {
     bloomLevel: "any",
     sourceType: "any",
   });
+  const [sets, setSets] = useState<SetSummary[]>([]);
+  const [scope, setScope] = useState<SetScope>({ kind: "all" });
   const [expanded, setExpanded] = useState<string | null>(null);
   const [variationTarget, setVariationTarget] = useState<Question | null>(null);
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
@@ -97,9 +101,10 @@ function BankPageInner() {
   // old `async function` declaration form that was here previously).
   const reload = useCallback(async () => {
     try {
-      const [bankRes, taxRes] = await Promise.all([
+      const [bankRes, taxRes, setsRes] = await Promise.all([
         fetch("/api/bank/questions"),
         fetch("/api/bank/taxonomy"),
+        fetch("/api/bank/sets"),
       ]);
       if (!bankRes.ok) throw new Error(`Failed to load bank (${bankRes.status})`);
       const data = await bankRes.json();
@@ -107,6 +112,10 @@ function BankPageInner() {
       if (taxRes.ok) {
         const tax = await taxRes.json();
         setTaxonomy(tax);
+      }
+      if (setsRes.ok) {
+        const setsData = await setsRes.json();
+        setSets(setsData.sets ?? []);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Load failed");
@@ -142,7 +151,13 @@ function BankPageInner() {
   const filtered = useMemo(() => {
     const DIFFICULTY_ORDER: Record<string, number> = { easy: 0, medium: 1, hard: 2 };
     if (!all) return [];
+    const folderSetIds =
+      scope.kind === "folder"
+        ? new Set(sets.filter((s) => s.folder === scope.folder).map((s) => s.id))
+        : null;
     const result = all.filter((q) => {
+      if (scope.kind === "set" && q.setId !== scope.id) return false;
+      if (folderSetIds && !(q.setId && folderSetIds.has(q.setId))) return false;
       if (filter.topic && !q.topic.toLowerCase().includes(filter.topic.toLowerCase())) return false;
       if (filter.subject !== "any" && q.subject !== filter.subject) return false;
       if (filter.lesson !== "any" && q.lesson !== filter.lesson) return false;
@@ -165,7 +180,7 @@ function BankPageInner() {
         // API already returns desc(createdAt), keep as-is
         return result;
     }
-  }, [all, filter, sortMode]);
+  }, [all, filter, sortMode, scope, sets]);
 
   // ── Row-level callbacks (STABLE via useCallback) ──────────────────────
   //
@@ -482,6 +497,16 @@ function BankPageInner() {
           {counts.variation > 0 && <Badge variant="secondary">{counts.variation} variations</Badge>}
         </div>
       </header>
+
+      <SetsPanel
+        sets={sets}
+        scope={scope}
+        onScopeChange={(next) => {
+          setScope(next);
+          setSelected(new Set());
+        }}
+        onChanged={() => void reload()}
+      />
 
       <Card>
         <CardHeader>

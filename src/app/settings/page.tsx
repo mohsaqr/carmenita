@@ -18,13 +18,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { PROMPTS } from "@/lib/prompts";
 import {
-  PROMPTS,
-  getPrompt,
-  setPromptOverride,
   clearPromptOverride,
-  hasPromptOverride,
-} from "@/lib/prompts";
+  fetchPromptOverride,
+  savePromptOverride,
+} from "@/lib/prompt-overrides-client";
 import type { ProviderConfig } from "@/types";
 
 /**
@@ -32,7 +31,7 @@ import type { ProviderConfig } from "@/types";
  *  - Configure each of the 10 LLM providers (API key, base URL, model)
  *  - Toggle each provider enabled/disabled
  *  - Select the ACTIVE provider (the one used by /upload)
- *  - Edit the MCQ generation prompt (saved to localStorage)
+ *  - Edit the MCQ generation prompt (saved to the database)
  *  - Adjust system settings (temperature, autoRetry)
  */
 export default function SettingsPage() {
@@ -55,9 +54,9 @@ export default function SettingsPage() {
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground text-sm">
-          Configure your LLM providers and the quiz-generation prompt. All data
-          stays in your browser — API keys are never sent anywhere except directly
-          to the provider you&apos;re calling.
+          Configure your LLM providers and the quiz-generation prompt. Settings
+          and API keys are saved to your account in the Carmenita database, so
+          they follow you to any browser you sign in from.
         </p>
       </header>
 
@@ -318,32 +317,51 @@ function PromptEditorCard() {
   const [selectedId, setSelectedId] = useState<string>(EDITABLE_IDS[0]);
   const [value, setValue] = useState("");
   const [modified, setModified] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
-  // Hydrate from localStorage AFTER mount to avoid SSR mismatch.
+  // Overrides live in the database; load the selected one on change.
   useEffect(() => {
+    let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMounted(true);
-    setValue(getPrompt(selectedId));
-    setModified(hasPromptOverride(selectedId));
+    setLoaded(false);
+    fetchPromptOverride(selectedId)
+      .then((override) => {
+        if (cancelled) return;
+        setValue(override ?? PROMPTS[selectedId].defaultValue);
+        setModified(override !== null);
+        setLoaded(true);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        toast.error(err instanceof Error ? err.message : "Could not load prompt");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedId]);
-
-  if (!mounted) return null;
 
   const def = PROMPTS[selectedId];
   if (!def) return null;
 
-  const handleSave = () => {
-    setPromptOverride(selectedId, value);
-    setModified(true);
-    toast.success(`Saved override for ${def.name}`);
+  const handleSave = async () => {
+    try {
+      await savePromptOverride(selectedId, value);
+      setModified(true);
+      toast.success(`Saved override for ${def.name}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    }
   };
 
-  const handleReset = () => {
-    clearPromptOverride(selectedId);
-    setValue(def.defaultValue);
-    setModified(false);
-    toast.success(`Reset ${def.name} to default`);
+  const handleReset = async () => {
+    try {
+      await clearPromptOverride(selectedId);
+      setValue(def.defaultValue);
+      setModified(false);
+      toast.success(`Reset ${def.name} to default`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reset failed");
+    }
   };
 
   return (
@@ -369,7 +387,6 @@ function PromptEditorCard() {
                 {EDITABLE_IDS.map((id) => (
                   <SelectItem key={id} value={id}>
                     {PROMPTS[id].name}
-                    {hasPromptOverride(id) ? " (modified)" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -382,12 +399,13 @@ function PromptEditorCard() {
         <Textarea
           rows={18}
           value={value}
+          disabled={!loaded}
           onChange={(e) => setValue(e.target.value)}
           className="font-mono text-xs"
         />
         <Separator />
         <div className="flex items-center gap-2">
-          <Button onClick={handleSave}>Save prompt</Button>
+          <Button onClick={handleSave} disabled={!loaded}>Save prompt</Button>
           <Button variant="outline" onClick={handleReset}>
             Reset to default
           </Button>

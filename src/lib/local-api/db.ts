@@ -18,6 +18,7 @@
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
 import { getAuthState } from "@/lib/google-auth";
 import { scheduleDriveSync } from "@/lib/google-drive";
+import { upgradeLocalSchema } from "./schema-upgrade";
 
 const IDB_NAME = "carmenita-local";
 const IDB_STORE = "blobs";
@@ -102,8 +103,16 @@ export function initLocalDb(): Promise<Database> {
       buf = new Uint8Array(await res.arrayBuffer());
     }
 
-    db = new sqlJs.Database(buf);
-    return db;
+    const loaded = new sqlJs.Database(buf);
+    db = loaded;
+    // Bring older browser copies up to the current schema (sets,
+    // settings), then persist so the upgrade only happens once.
+    const { changed } = upgradeLocalSchema({
+      exec: (sqlText) => loaded.exec(sqlText),
+      all: (sqlText) => queryAll(sqlText),
+    });
+    if (changed) await flushLocalDb();
+    return loaded;
   })();
 
   return readyPromise;

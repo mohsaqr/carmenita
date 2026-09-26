@@ -26,6 +26,7 @@ function makeQuestion(overrides: Partial<Question> = {}): Question {
     sourceType: "gift-import",
     sourceDocumentId: null,
     sourceLabel: null,
+    setId: null,
     parentQuestionId: null,
     variationType: null,
     notes: null,

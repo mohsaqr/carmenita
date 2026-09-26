@@ -14,15 +14,18 @@ import {
 import { IMPORT_PLACEHOLDERS } from "@/components/ImportCard";
 import type { ImportResult } from "@/components/ImportCard";
 import type { MetadataValues } from "./MetadataForm";
+import { SetNameFields } from "@/components/SetNameFields";
 
 interface PromptAndImportProps {
   format: ChatbotPromptFormat;
   metadata: MetadataValues;
   onMetadataChange: (patch: Partial<MetadataValues>) => void;
   importText: string;
-  importSourceLabel: string;
+  setName: string;
+  folder: string;
   onImportTextChange: (text: string) => void;
-  onImportSourceLabelChange: (label: string) => void;
+  onSetNameChange: (name: string) => void;
+  onFolderChange: (folder: string) => void;
   onImported: (result: ImportResult) => void;
 }
 
@@ -31,9 +34,11 @@ export function PromptAndImport({
   metadata,
   onMetadataChange,
   importText,
-  importSourceLabel,
+  setName,
+  folder,
   onImportTextChange,
-  onImportSourceLabelChange,
+  onSetNameChange,
+  onFolderChange,
   onImported,
 }: PromptAndImportProps) {
   const [copied, setCopied] = useState(false);
@@ -65,6 +70,10 @@ export function PromptAndImport({
       toast.error("Paste the chatbot's output first");
       return;
     }
+    if (!setName.trim()) {
+      toast.error("Give this set a name first");
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/bank/import", {
@@ -73,7 +82,8 @@ export function PromptAndImport({
         body: JSON.stringify({
           format,
           text: importText,
-          sourceLabel: importSourceLabel || undefined,
+          setName: setName.trim(),
+          folder: folder.trim() || null,
         }),
       });
       const data = await res.json();
@@ -104,7 +114,7 @@ export function PromptAndImport({
   function handleFile(file: File) {
     void file.text().then((text) => {
       onImportTextChange(text);
-      if (!importSourceLabel) onImportSourceLabelChange(file.name);
+      if (!setName) onSetNameChange(file.name.replace(/\.[^.]+$/, ""));
     });
   }
 
@@ -243,17 +253,15 @@ export function PromptAndImport({
       <div className="space-y-3">
         <h3 className="text-sm font-semibold">2. Paste the chatbot&apos;s output here</h3>
 
+        <SetNameFields
+          name={setName}
+          folder={folder}
+          onNameChange={onSetNameChange}
+          onFolderChange={onFolderChange}
+        />
+
         <div className="flex items-center gap-3 flex-wrap">
           <Badge variant="secondary">{FORMAT_DESCRIPTIONS[format].label}</Badge>
-          <div className="space-y-1.5 flex-1 min-w-[200px]">
-            <Label htmlFor="wiz-source-label">Source label (optional)</Label>
-            <Input
-              id="wiz-source-label"
-              value={importSourceLabel}
-              onChange={(e) => onImportSourceLabelChange(e.target.value)}
-              placeholder="e.g. biology-final-2025"
-            />
-          </div>
           <div className="space-y-1.5">
             <Label>Or upload file</Label>
             <Input
@@ -276,7 +284,7 @@ export function PromptAndImport({
         />
 
         <div className="flex items-center justify-end">
-          <Button onClick={handleImport} disabled={busy || !importText.trim()}>
+          <Button onClick={handleImport} disabled={busy || !importText.trim() || !setName.trim()}>
             {busy ? "Importing\u2026" : "Import into bank"}
           </Button>
         </div>

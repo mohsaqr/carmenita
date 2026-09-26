@@ -2,10 +2,9 @@
  * Prompt registry — the single place where all LLM system prompts live.
  *
  * Same pattern as handai's `src/lib/prompts.ts` but scoped to Carmenita:
- * a `PROMPTS` record of `PromptDef`, `getPrompt(id)` that checks a
- * localStorage override before falling back to the default, and
- * `setPromptOverride(id, value)` / `clearPromptOverride(id)` for the
- * Settings page.
+ * a `PROMPTS` record of `PromptDef` and `getPrompt(id)` returning the
+ * default. Per-user overrides are stored in the database (see
+ * `settings-store.ts` / `prompt-overrides-client.ts`).
  *
  * Five first-class prompts:
  *
@@ -27,8 +26,8 @@ export interface PromptDef {
   defaultValue: string;
 }
 
-// localStorage prefix. Different from handai's so the two apps do not
-// share overrides even if opened side-by-side.
+// Legacy localStorage prefix (pre-database versions). Only read now, to
+// migrate old overrides into the DB the first time the Settings page loads.
 const OVERRIDE_PREFIX = "carmenita_prompt_override:";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,38 +253,20 @@ export const PROMPTS: Record<string, PromptDef> = {
 };
 
 /**
- * Read a prompt by id. Checks localStorage for a user override first;
- * falls back to the registered default. Safe to call on the server
- * (where `localStorage` is undefined) — it just returns the default.
+ * The registered default for a prompt id. User overrides live in the
+ * database (`app_settings`, key `prompt:<id>`): the server resolves them
+ * with `resolvePrompt()` in `settings-store.ts`, and the Settings page
+ * edits them through `prompt-overrides-client.ts`.
  */
 export function getPrompt(id: string): string {
   const def = PROMPTS[id];
   if (!def) throw new Error(`Unknown prompt id: ${id}`);
-  if (typeof window !== "undefined" && window.localStorage) {
-    const override = window.localStorage.getItem(OVERRIDE_PREFIX + id);
-    if (override !== null) return override;
-  }
   return def.defaultValue;
 }
 
-export function setPromptOverride(id: string, value: string): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  if (!PROMPTS[id]) throw new Error(`Unknown prompt id: ${id}`);
-  window.localStorage.setItem(OVERRIDE_PREFIX + id, value);
-}
-
-export function clearPromptOverride(id: string): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  window.localStorage.removeItem(OVERRIDE_PREFIX + id);
-}
-
-/**
- * Check if a prompt has a user-defined override (for showing "(modified)"
- * badges in the Settings UI).
- */
-export function hasPromptOverride(id: string): boolean {
-  if (typeof window === "undefined" || !window.localStorage) return false;
-  return window.localStorage.getItem(OVERRIDE_PREFIX + id) !== null;
+/** localStorage key used by older versions — read once to migrate into the DB. */
+export function legacyPromptOverrideKey(id: string): string {
+  return OVERRIDE_PREFIX + id;
 }
 
 /**

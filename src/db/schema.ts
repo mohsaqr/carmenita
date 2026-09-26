@@ -63,6 +63,27 @@ export const quizzes = sqliteTable(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Question sets — a named batch of questions, created by every import
+// (e.g. "Chapter 3 MCQs"), optionally filed into a folder (e.g.
+// "pathology"). Deleting a set deletes its questions (ON DELETE CASCADE
+// on questions.set_id). Folder is a plain label, not its own table:
+// a folder exists while at least one set uses it.
+// ─────────────────────────────────────────────────────────────────────────────
+export const questionSets = sqliteTable(
+  "question_sets",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    folder: text("folder"),
+    createdAt: text("created_at").notNull(),
+    userId: text("user_id"),
+  },
+  (t) => ({
+    byFolder: index("idx_question_sets_folder").on(t.folder),
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Questions — standalone question bank. Questions are NOT owned by any
 // single quiz; quizzes reference them via the `quiz_questions` junction
 // table below. A question can appear in multiple quizzes, be imported
@@ -140,6 +161,11 @@ export const questions = sqliteTable(
       { onDelete: "set null" },
     ),
     sourceLabel: text("source_label"), // e.g. import filename, or null
+    // The named set this question was imported into (null for
+    // generated / manual questions). Cascade: deleting a set deletes it.
+    setId: text("set_id").references(() => questionSets.id, {
+      onDelete: "cascade",
+    }),
     // If this question was generated as a VARIATION of another, point back
     // to the original. Self-reference with ON DELETE SET NULL so deleting
     // a parent doesn't cascade-delete its variations.
@@ -159,6 +185,7 @@ export const questions = sqliteTable(
     bySource: index("idx_questions_source_type").on(t.sourceType),
     bySourceDoc: index("idx_questions_source_doc").on(t.sourceDocumentId),
     byParent: index("idx_questions_parent").on(t.parentQuestionId),
+    bySet: index("idx_questions_set_id").on(t.setId),
   }),
 );
 
@@ -231,6 +258,57 @@ export const answers = sqliteTable(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Users — username/password accounts for the server build. Passwords are
+// stored as `scrypt$<N>$<saltHex>$<hashHex>` (see src/lib/auth.ts); the
+// raw password never touches the DB. Usernames are matched
+// case-insensitively via the lowercase `username_key` column.
+// ─────────────────────────────────────────────────────────────────────────────
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  username: text("username").notNull(),
+  usernameKey: text("username_key").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sessions — one row per logged-in browser. `id` is the SHA-256 of the
+// random cookie token, so a leaked DB file can't be replayed as cookies.
+// ─────────────────────────────────────────────────────────────────────────────
+export const sessions = sqliteTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (t) => ({
+    byUser: index("idx_sessions_user_id").on(t.userId),
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App settings — per-user key/value store replacing browser localStorage.
+// Holds the provider config + API keys (key "carmenita-storage") and
+// prompt overrides (key "prompt:<promptId>"). Value is JSON.
+// ─────────────────────────────────────────────────────────────────────────────
+export const appSettings = sqliteTable(
+  "app_settings",
+  {
+    userId: text("user_id").notNull(),
+    key: text("key").notNull(),
+    value: text("value", { mode: "json" }).$type<unknown>().notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.key] }),
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Relations (for typed Drizzle queries like `db.query.quizzes.findFirst(...)`)
 // ─────────────────────────────────────────────────────────────────────────────
 export const documentsRelations = relations(documents, ({ many }) => ({
@@ -289,3 +367,7 @@ export type Attempt = typeof attempts.$inferSelect;
 export type NewAttempt = typeof attempts.$inferInsert;
 export type Answer = typeof answers.$inferSelect;
 export type NewAnswer = typeof answers.$inferInsert;
+export type User = typeof users.$inferSelect;
+export type Session = typeof sessions.$inferSelect;
+export type AppSetting = typeof appSettings.$inferSelect;
+export type QuestionSet = typeof questionSets.$inferSelect;

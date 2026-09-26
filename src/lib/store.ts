@@ -1,10 +1,12 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { createServerStorage } from "@/lib/server-storage";
 import type { ProviderConfig, SystemSettings, SupportedProvider } from "@/types";
 
 /**
  * Carmenita client-side store. Persists provider configs + system
- * settings to localStorage under key "carmenita-storage".
+ * settings to the database (per signed-in user) under settings key
+ * "carmenita-storage", via `createServerStorage()`.
  *
  * Uses the same `persist` + `merge` pattern as handai's store so that
  * new providers added in future versions appear automatically for
@@ -118,6 +120,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "carmenita-storage",
+      storage: createJSONStorage(() => createServerStorage()),
       merge: (persisted: unknown, current: AppState): AppState => {
         const saved = persisted as Partial<AppState>;
         return {

@@ -6,6 +6,8 @@ import { GenerateQuizSchema } from "@/lib/validation";
 import { generateQuizQuestions } from "@/lib/llm-quiz";
 import { insertQuizAndQuestions } from "@/lib/db-helpers";
 import { isLectureFilename } from "@/lib/doc-extract";
+import { getUserFromRequest } from "@/lib/auth";
+import { resolvePrompt } from "@/lib/settings-store";
 
 /**
  * POST /api/generate-quiz
@@ -70,7 +72,10 @@ export async function POST(req: NextRequest) {
       provider,
       settings,
       promptId,
-      systemPromptOverride,
+      // An explicit per-request override wins; otherwise the user's
+      // saved override from Settings (or the default).
+      systemPromptOverride:
+        systemPromptOverride ?? resolvePrompt(getUserFromRequest(req)?.id, promptId),
       temperature,
       defaultSubject: defaultSubject ?? null,
       defaultLesson: defaultLesson ?? null,

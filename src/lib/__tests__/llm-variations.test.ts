@@ -29,6 +29,7 @@ const sampleQuestion: Question = {
   sourceType: "document",
   sourceDocumentId: null,
   sourceLabel: null,
+  setId: null,
   parentQuestionId: null,
   variationType: null,
   notes: null,

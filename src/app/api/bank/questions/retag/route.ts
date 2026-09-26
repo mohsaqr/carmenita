@@ -4,6 +4,8 @@ import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BankRetagSchema } from "@/lib/validation";
 import { generateTagging } from "@/lib/llm-enhance";
+import { getUserFromRequest } from "@/lib/auth";
+import { resolvePrompt } from "@/lib/settings-store";
 
 /**
  * POST /api/bank/questions/retag
@@ -42,6 +44,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { ids, provider, temperature } = parsed.data;
+  const template = resolvePrompt(getUserFromRequest(req)?.id, "carmenita.tag.add");
 
   const rows = db
     .select()
@@ -58,7 +61,7 @@ export async function POST(req: NextRequest) {
 
   for (const row of rows) {
     try {
-      const tagging = await generateTagging(row, provider, temperature);
+      const tagging = await generateTagging(row, provider, temperature, template);
       db.update(questions)
         .set({
           subject: tagging.subject,
