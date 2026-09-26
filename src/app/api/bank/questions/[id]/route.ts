@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db/client";
 import { questions } from "@/db/schema";
+import { requireUser } from "@/lib/auth";
 
 /**
  * PATCH /api/bank/questions/[id] — partial update of a single
@@ -24,6 +25,9 @@ export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
 
   let body: unknown;
@@ -58,7 +62,7 @@ export async function PATCH(
   const result = db
     .update(questions)
     .set(updates)
-    .where(eq(questions.id, id))
+    .where(and(eq(questions.id, id), eq(questions.userId, userId)))
     .run();
 
   if (result.changes === 0) {
@@ -74,11 +78,17 @@ export async function PATCH(
  * from any quiz) and its answer rows.
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
-  const result = db.delete(questions).where(eq(questions.id, id)).run();
+  const result = db
+    .delete(questions)
+    .where(and(eq(questions.id, id), eq(questions.userId, userId)))
+    .run();
   if (result.changes === 0) {
     return NextResponse.json({ error: "Question not found" }, { status: 404 });
   }

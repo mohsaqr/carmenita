@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, gt, lt } from "drizzle-orm";
+import { NextResponse } from "next/server";
+import { and, eq, gt, lt, ne } from "drizzle-orm";
 import { db } from "@/db/client";
 import { sessions, users, type User } from "@/db/schema";
 import { hashPassword, verifyPassword } from "@/lib/password";
@@ -92,7 +93,47 @@ export function deleteSession(token: string | undefined | null): void {
   db.delete(sessions).where(eq(sessions.id, hashToken(token))).run();
 }
 
+type CookieRequest = { cookies: { get(name: string): { value: string } | undefined } };
+
 /** Reads the session cookie off a request and resolves the user. */
-export function getUserFromRequest(req: { cookies: { get(name: string): { value: string } | undefined } }): PublicUser | null {
+export function getUserFromRequest(req: CookieRequest): PublicUser | null {
   return getUserBySessionToken(req.cookies.get(SESSION_COOKIE)?.value);
+}
+
+/**
+ * For route handlers: the signed-in user, or a ready-made 401 response.
+ * Every data route scopes its queries to `user.id` — each user has a
+ * private bank. The proxy already blocks signed-out requests; this is
+ * the second, per-route line of defence and the source of the user id.
+ *
+ *   const auth = requireUser(req);
+ *   if ("response" in auth) return auth.response;
+ *   const userId = auth.user.id;
+ */
+export function requireUser(req: CookieRequest): { user: PublicUser } | { response: NextResponse } {
+  const user = getUserFromRequest(req);
+  if (!user) return { response: NextResponse.json({ error: "Not signed in" }, { status: 401 }) };
+  return { user };
+}
+
+/** Usernames of every other account, for the "send a copy to…" picker. */
+export function listOtherUsernames(userId: string): string[] {
+  return db
+    .select({ username: users.username })
+    .from(users)
+    .where(ne(users.id, userId))
+    .orderBy(users.usernameKey)
+    .all()
+    .map((r) => r.username);
+}
+
+/** Resolve a username (case-insensitive) to a user, or null. */
+export function findUserByUsername(username: string): PublicUser | null {
+  return (
+    db
+      .select({ id: users.id, username: users.username })
+      .from(users)
+      .where(eq(users.usernameKey, usernameKey(username)))
+      .get() ?? null
+  );
 }

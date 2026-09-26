@@ -4,6 +4,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { attempts, quizzes } from "@/db/schema";
 import { CreateAttemptSchema } from "@/lib/validation";
+import { requireUser } from "@/lib/auth";
 
 /**
  * GET /api/attempts — list all attempts across every quiz, joined with
@@ -15,7 +16,10 @@ import { CreateAttemptSchema } from "@/lib/validation";
  * Returns: { attempts: [{ id, quizId, quizTitle, startedAt,
  * completedAt, score, questionCount }] }
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const rows = db
     .select({
       id: attempts.id,
@@ -28,7 +32,7 @@ export async function GET() {
     })
     .from(attempts)
     .innerJoin(quizzes, eq(quizzes.id, attempts.quizId))
-    .where(isNull(quizzes.deletedAt))
+    .where(and(isNull(quizzes.deletedAt), eq(attempts.userId, userId)))
     .orderBy(desc(attempts.startedAt))
     .all();
 
@@ -41,6 +45,9 @@ export async function GET() {
  * Returns: { id, quizId, startedAt }
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -61,7 +68,11 @@ export async function POST(req: NextRequest) {
     .select({ id: quizzes.id })
     .from(quizzes)
     .where(
-      and(eq(quizzes.id, parsed.data.quizId), isNull(quizzes.deletedAt)),
+      and(
+        eq(quizzes.id, parsed.data.quizId),
+        isNull(quizzes.deletedAt),
+        eq(quizzes.userId, userId),
+      ),
     )
     .get();
   if (!quiz) {
@@ -78,7 +89,7 @@ export async function POST(req: NextRequest) {
       startedAt,
       completedAt: null,
       score: null,
-      userId: null,
+      userId,
     })
     .run();
 

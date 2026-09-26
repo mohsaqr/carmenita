@@ -67,11 +67,23 @@ if (existing) {
   sqlite.prepare("DELETE FROM sessions WHERE user_id = ?").run(existing.id);
   console.log(`Password reset for "${name}" in ${dbPath}`);
 } else {
-  sqlite
-    .prepare(
-      "INSERT INTO users (id, username, username_key, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-    )
-    .run(randomUUID(), name, key, passwordHash, new Date().toISOString());
+  const id = randomUUID();
+  const isFirstUser = sqlite.prepare("SELECT COUNT(*) AS n FROM users").get().n === 0;
+  sqlite.transaction(() => {
+    sqlite
+      .prepare(
+        "INSERT INTO users (id, username, username_key, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(id, name, key, passwordHash, new Date().toISOString());
+    // Every user has a private bank. On a fresh install (from the public
+    // seed) the content has no owner yet: the first account takes it.
+    if (isFirstUser) {
+      const claimed = ["question_sets", "questions", "quizzes", "attempts", "documents"]
+        .map((t) => sqlite.prepare(`UPDATE ${t} SET user_id = ? WHERE user_id IS NULL`).run(id).changes)
+        .reduce((a, b) => a + b, 0);
+      if (claimed > 0) console.log(`First account: took ownership of ${claimed} existing rows`);
+    }
+  })();
   console.log(`Created user "${name}" in ${dbPath}`);
 }
 sqlite.close();

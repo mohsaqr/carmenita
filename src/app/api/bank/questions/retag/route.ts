@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BankRetagSchema } from "@/lib/validation";
 import { generateTagging } from "@/lib/llm-enhance";
-import { getUserFromRequest } from "@/lib/auth";
 import { resolvePrompt } from "@/lib/settings-store";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/bank/questions/retag
@@ -28,6 +28,9 @@ import { resolvePrompt } from "@/lib/settings-store";
  * the LLM to produce a complete tagging.
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -44,12 +47,12 @@ export async function POST(req: NextRequest) {
   }
 
   const { ids, provider, temperature } = parsed.data;
-  const template = resolvePrompt(getUserFromRequest(req)?.id, "carmenita.tag.add");
+  const template = resolvePrompt(userId, "carmenita.tag.add");
 
   const rows = db
     .select()
     .from(questions)
-    .where(inArray(questions.id, ids))
+    .where(and(inArray(questions.id, ids), eq(questions.userId, userId)))
     .all();
 
   if (rows.length === 0) {

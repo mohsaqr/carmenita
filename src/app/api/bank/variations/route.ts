@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { GenerateVariationsSchema } from "@/lib/validation";
 import { generateVariations } from "@/lib/llm-variations";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/bank/variations
@@ -22,6 +23,9 @@ import { generateVariations } from "@/lib/llm-variations";
  * to their parent.
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -42,7 +46,7 @@ export async function POST(req: NextRequest) {
   const original = db
     .select()
     .from(questions)
-    .where(eq(questions.id, questionId))
+    .where(and(eq(questions.id, questionId), eq(questions.userId, userId)))
     .get();
   if (!original) {
     return NextResponse.json({ error: "Question not found" }, { status: 404 });
@@ -104,7 +108,7 @@ export async function POST(req: NextRequest) {
     parentQuestionId: original.id,
     variationType,
     createdAt: now,
-    userId: null,
+    userId,
   }));
 
   db.insert(questions).values(rows).run();

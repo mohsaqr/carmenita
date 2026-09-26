@@ -8,6 +8,7 @@ import { parseAiken } from "@/lib/formats/aiken";
 import { parseMarkdown } from "@/lib/formats/markdown";
 import type { QuestionSource } from "@/db/schema";
 import { findOrCreateSet } from "@/lib/question-sets";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/bank/import
@@ -20,6 +21,9 @@ import { findOrCreateSet } from "@/lib/question-sets";
  * Returns { imported, warnings, ids, setId, setCreated }.
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -86,13 +90,13 @@ export async function POST(req: NextRequest) {
     sourceDocumentId: null,
     sourceLabel: setName,
     createdAt: new Date(baseTime + (total - 1 - i)).toISOString(),
-    userId: null,
+    userId,
   }));
 
   // better-sqlite3 transactions are synchronous: the set is only kept
   // if the question insert succeeds too.
   const set = db.transaction(() => {
-    const target = findOrCreateSet(setName, folder);
+    const target = findOrCreateSet(userId, setName, folder);
     db.insert(questions)
       .values(rows.map((r) => ({ ...r, setId: target.id })))
       .run();

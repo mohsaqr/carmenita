@@ -64,5 +64,13 @@ export function upgradeLocalSchema(db: SqlAdapter): { changed: boolean } {
     changed = true;
   }
 
+  // Migration 0007 (per-user banks) added question_sets.received_from.
+  // The static build has no accounts, but the column must exist so the
+  // shared SELECTs match the server schema.
+  if (!hasColumn("question_sets", "received_from")) {
+    db.exec(`ALTER TABLE question_sets ADD received_from text`);
+    changed = true;
+  }
+
   return { changed };
 }

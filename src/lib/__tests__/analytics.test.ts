@@ -44,6 +44,7 @@ const {
   bloomBreakdown,
   improvementCurve,
   slowestQuestions,
+  needsReview,
 } = await import("@/lib/analytics");
 
 // ── Synthetic data seeding ────────────────────────────────────────────────────
@@ -53,6 +54,10 @@ const quizId = "quiz1";
 const quiz2Id = "quiz2";
 
 // Questions: 2 topics, 3 difficulties, 2 bloom levels
+// Every row belongs to USER; OTHER owns nothing (private results).
+const USER = "user-a";
+const OTHER = "user-b";
+
 const questionSpecs = [
   { id: "q1", topic: "photosynthesis", difficulty: "easy", bloomLevel: "remember" },
   { id: "q2", topic: "photosynthesis", difficulty: "medium", bloomLevel: "apply" },
@@ -71,7 +76,7 @@ beforeAll(() => {
     charCount: 101,
     truncated: false,
     createdAt: "2026-04-01T00:00:00Z",
-    userId: null,
+    userId: USER,
   }).run();
 
   testDb.insert(quizzes).values([
@@ -83,7 +88,7 @@ beforeAll(() => {
       provider: "openai",
       model: "gpt-4o",
       createdAt: "2026-04-01T00:00:00Z",
-      userId: null,
+      userId: USER,
     },
     {
       id: quiz2Id,
@@ -93,7 +98,7 @@ beforeAll(() => {
       provider: "openai",
       model: "gpt-4o",
       createdAt: "2026-04-01T00:00:00Z",
-      userId: null,
+      userId: USER,
     },
   ]).run();
 
@@ -114,7 +119,7 @@ beforeAll(() => {
       sourceDocumentId: docId,
       sourceLabel: "biology.pdf",
       createdAt: "2026-04-01T00:00:00Z",
-      userId: null,
+      userId: USER,
     })),
   ).run();
 
@@ -149,7 +154,7 @@ beforeAll(() => {
       startedAt: "2026-04-01T00:00:00Z",
       completedAt: a.completedAt,
       score: a.score,
-      userId: null,
+      userId: USER,
     })),
   ).run();
 
@@ -189,7 +194,7 @@ afterAll(() => {
 
 describe("overview", () => {
   it("counts quizzes, attempts, documents, and averages score", async () => {
-    const o = await overview();
+    const o = await overview(USER);
     expect(o.quizCount).toBe(2);
     expect(o.attemptCount).toBe(3);
     expect(o.documentCount).toBe(1);
@@ -200,7 +205,7 @@ describe("overview", () => {
 
 describe("topicBreakdown", () => {
   it("groups correctness by topic", async () => {
-    const rows = await topicBreakdown();
+    const rows = await topicBreakdown(USER);
     // photosynthesis: q1, q2, q3 across 3 attempts = 9 rows
     //   a1: q1✓, q2✓, q3✗ (2/3)
     //   a2: q1✓, q2✓, q3✗ (2/3)
@@ -224,16 +229,16 @@ describe("topicBreakdown", () => {
   });
 
   it("filters to a single quiz when quizId is provided", async () => {
-    const rows = await topicBreakdown(quizId);
+    const rows = await topicBreakdown(USER, quizId);
     expect(rows.length).toBe(2); // 2 topics in this quiz
-    const rows2 = await topicBreakdown(quiz2Id);
+    const rows2 = await topicBreakdown(USER, quiz2Id);
     expect(rows2.length).toBe(0); // empty quiz
   });
 });
 
 describe("difficultyBreakdown", () => {
   it("splits by easy/medium/hard and orders them", async () => {
-    const rows = await difficultyBreakdown();
+    const rows = await difficultyBreakdown(USER);
     expect(rows.map((r) => r.difficulty)).toEqual(["easy", "medium", "hard"]);
     // easy: q1, q4 across 3 attempts = 6 rows
     //   q1 always correct (3), q4: 0/✓/✓ = 2
@@ -246,7 +251,7 @@ describe("difficultyBreakdown", () => {
 
 describe("bloomBreakdown", () => {
   it("groups by Bloom level", async () => {
-    const rows = await bloomBreakdown();
+    const rows = await bloomBreakdown(USER);
     const rem = rows.find((r) => r.bloomLevel === "remember");
     const ana = rows.find((r) => r.bloomLevel === "analyze");
     expect(rem).toBeDefined();
@@ -259,7 +264,7 @@ describe("bloomBreakdown", () => {
 
 describe("improvementCurve", () => {
   it("returns scores in chronological order with trial numbers", async () => {
-    const curve = await improvementCurve(quizId);
+    const curve = await improvementCurve(USER, quizId);
     expect(curve).toHaveLength(3);
     expect(curve[0].trial).toBe(1);
     expect(curve[0].score).toBeCloseTo(0.4, 4);
@@ -268,18 +273,32 @@ describe("improvementCurve", () => {
   });
 
   it("returns empty array for a quiz with no attempts", async () => {
-    const curve = await improvementCurve(quiz2Id);
+    const curve = await improvementCurve(USER, quiz2Id);
     expect(curve).toHaveLength(0);
   });
 });
 
 describe("slowestQuestions", () => {
   it("returns the slowest questions by average time", async () => {
-    const rows = await slowestQuestions(3);
+    const rows = await slowestQuestions(USER, 3);
     expect(rows.length).toBe(3);
     // q3 (hard, 10s) should be slowest, then q2/q5 (medium, 5s)
     expect(rows[0].questionId).toBe("q3");
     expect(rows[0].avgMs).toBe(10000);
     expect(rows[0].answered).toBe(3);
+  });
+});
+
+describe("per-user privacy", () => {
+  it("another user sees none of these results", async () => {
+    const o = await overview(OTHER);
+    expect(o).toEqual({ quizCount: 0, attemptCount: 0, documentCount: 0, avgScore: null });
+    expect(await topicBreakdown(OTHER)).toEqual([]);
+    expect(await topicBreakdown(OTHER, quizId)).toEqual([]);
+    expect(await difficultyBreakdown(OTHER)).toEqual([]);
+    expect(await bloomBreakdown(OTHER)).toEqual([]);
+    expect(await improvementCurve(OTHER, quizId)).toEqual([]);
+    expect(await slowestQuestions(OTHER, 10)).toEqual([]);
+    expect(await needsReview(OTHER, 50)).toEqual([]);
   });
 });

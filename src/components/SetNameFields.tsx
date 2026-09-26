@@ -9,6 +9,8 @@ export interface SetSummary {
   id: string;
   name: string;
   folder: string | null;
+  /** Sender's username when this set arrived as a copy (server build only). */
+  receivedFrom?: string | null;
   createdAt: string;
   questionCount: number;
 }

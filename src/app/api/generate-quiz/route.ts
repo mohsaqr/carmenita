@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { documents } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { GenerateQuizSchema } from "@/lib/validation";
 import { generateQuizQuestions } from "@/lib/llm-quiz";
 import { insertQuizAndQuestions } from "@/lib/db-helpers";
 import { isLectureFilename } from "@/lib/doc-extract";
-import { getUserFromRequest } from "@/lib/auth";
 import { resolvePrompt } from "@/lib/settings-store";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/generate-quiz
@@ -25,6 +25,9 @@ import { resolvePrompt } from "@/lib/settings-store";
  *   6. Return the new quizId
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -52,7 +55,11 @@ export async function POST(req: NextRequest) {
     defaultTags,
   } = parsed.data;
 
-  const doc = db.select().from(documents).where(eq(documents.id, documentId)).get();
+  const doc = db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.id, documentId), eq(documents.userId, userId)))
+    .get();
   if (!doc) {
     return NextResponse.json({ error: "Document not found" }, { status: 404 });
   }
@@ -75,7 +82,7 @@ export async function POST(req: NextRequest) {
       // An explicit per-request override wins; otherwise the user's
       // saved override from Settings (or the default).
       systemPromptOverride:
-        systemPromptOverride ?? resolvePrompt(getUserFromRequest(req)?.id, promptId),
+        systemPromptOverride ?? resolvePrompt(userId, promptId),
       temperature,
       defaultSubject: defaultSubject ?? null,
       defaultLesson: defaultLesson ?? null,
@@ -94,6 +101,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { quizId, questionCount } = insertQuizAndQuestions({
+    userId,
     title,
     settings,
     provider,

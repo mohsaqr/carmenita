@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BulkDeleteSchema } from "@/lib/validation";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/bank/questions/bulk-delete
@@ -19,6 +20,9 @@ import { BulkDeleteSchema } from "@/lib/validation";
  * the silent behavior of SQL DELETE.
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -35,7 +39,10 @@ export async function POST(req: NextRequest) {
   }
 
   const { ids } = parsed.data;
-  const result = db.delete(questions).where(inArray(questions.id, ids)).run();
+  const result = db
+    .delete(questions)
+    .where(and(inArray(questions.id, ids), eq(questions.userId, userId)))
+    .run();
 
   return NextResponse.json({
     deleted: result.changes,

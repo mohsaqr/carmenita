@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db/client";
 import { quizzes } from "@/db/schema";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/trash/[id]/restore — restore a trashed quiz.
@@ -16,14 +17,17 @@ import { quizzes } from "@/db/schema";
  * POST action on a trashed row.
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
   const result = db
     .update(quizzes)
     .set({ deletedAt: null })
-    .where(and(eq(quizzes.id, id), isNotNull(quizzes.deletedAt)))
+    .where(and(eq(quizzes.id, id), isNotNull(quizzes.deletedAt), eq(quizzes.userId, userId)))
     .run();
   if (result.changes === 0) {
     return NextResponse.json(
@@ -47,13 +51,16 @@ export async function POST(
  * truth and is never reduced by quiz deletion.
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
   const result = db
     .delete(quizzes)
-    .where(and(eq(quizzes.id, id), isNotNull(quizzes.deletedAt)))
+    .where(and(eq(quizzes.id, id), isNotNull(quizzes.deletedAt), eq(quizzes.userId, userId)))
     .run();
   if (result.changes === 0) {
     return NextResponse.json(

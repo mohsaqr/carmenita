@@ -11,8 +11,10 @@ export const documents = sqliteTable("documents", {
   charCount: integer("char_count").notNull(),
   truncated: integer("truncated", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
-  userId: text("user_id"), // nullable — forward-compat with multi-user
-});
+  userId: text("user_id"), // owner (NULL only in the public seed / static build)
+}, (t) => ({
+  byUser: index("idx_documents_user_id").on(t.userId),
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Quizzes — a generated quiz belongs to one document.
@@ -59,6 +61,7 @@ export const quizzes = sqliteTable(
     byDocument: index("idx_quizzes_document_id").on(t.documentId),
     byCreated: index("idx_quizzes_created_at").on(t.createdAt),
     byDeleted: index("idx_quizzes_deleted_at").on(t.deletedAt),
+    byUser: index("idx_quizzes_user_id").on(t.userId),
   }),
 );
 
@@ -75,11 +78,15 @@ export const questionSets = sqliteTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     folder: text("folder"),
+    // Username of the sender when this set arrived via "Send a copy".
+    receivedFrom: text("received_from"),
     createdAt: text("created_at").notNull(),
+    // Owner. Every user has a private bank; all content tables carry it.
     userId: text("user_id"),
   },
   (t) => ({
     byFolder: index("idx_question_sets_folder").on(t.folder),
+    byUser: index("idx_question_sets_user_id").on(t.userId),
   }),
 );
 
@@ -186,6 +193,7 @@ export const questions = sqliteTable(
     bySourceDoc: index("idx_questions_source_doc").on(t.sourceDocumentId),
     byParent: index("idx_questions_parent").on(t.parentQuestionId),
     bySet: index("idx_questions_set_id").on(t.setId),
+    byUser: index("idx_questions_user_id").on(t.userId),
   }),
 );
 
@@ -231,6 +239,7 @@ export const attempts = sqliteTable(
   (t) => ({
     byQuiz: index("idx_attempts_quiz_id").on(t.quizId),
     byCompleted: index("idx_attempts_completed_at").on(t.completedAt),
+    byUser: index("idx_attempts_user_id").on(t.userId),
   }),
 );
 

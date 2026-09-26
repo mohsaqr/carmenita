@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, isNull, asc } from "drizzle-orm";
 import { db } from "@/db/client";
 import { quizzes, questions, quizQuestions } from "@/db/schema";
+import { requireUser } from "@/lib/auth";
 
 /**
  * GET /api/quizzes/[id] — fetch a quiz with all its questions in order.
@@ -15,15 +16,18 @@ import { quizzes, questions, quizQuestions } from "@/db/schema";
  * To view or restore them, use `/api/trash`.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
 
   const quiz = db
     .select()
     .from(quizzes)
-    .where(and(eq(quizzes.id, id), isNull(quizzes.deletedAt)))
+    .where(and(eq(quizzes.id, id), isNull(quizzes.deletedAt), eq(quizzes.userId, userId)))
     .get();
   if (!quiz) {
     return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
@@ -71,15 +75,18 @@ export async function GET(
  * For permanent deletion, see `DELETE /api/trash/[id]`.
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
   const now = new Date().toISOString();
   const result = db
     .update(quizzes)
     .set({ deletedAt: now })
-    .where(and(eq(quizzes.id, id), isNull(quizzes.deletedAt)))
+    .where(and(eq(quizzes.id, id), isNull(quizzes.deletedAt), eq(quizzes.userId, userId)))
     .run();
   if (result.changes === 0) {
     return NextResponse.json({ error: "Quiz not found" }, { status: 404 });

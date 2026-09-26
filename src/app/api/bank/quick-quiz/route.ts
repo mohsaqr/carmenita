@@ -4,6 +4,7 @@ import { and, eq, inArray, like } from "drizzle-orm";
 import { db, sqlite } from "@/db/client";
 import { questions, quizzes, quizQuestions } from "@/db/schema";
 import { QuickQuizSchema } from "@/lib/validation";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/bank/quick-quiz
@@ -26,6 +27,9 @@ import { QuickQuizSchema } from "@/lib/validation";
  * provider="bank", model="bank", documentId=null.
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -73,11 +77,11 @@ export async function POST(req: NextRequest) {
     const existing = db
       .select({ id: questions.id })
       .from(questions)
-      .where(inArray(questions.id, candidateIds))
+      .where(and(inArray(questions.id, candidateIds), eq(questions.userId, userId)))
       .all();
     pool = existing.map((r) => r.id);
   } else {
-    const conditions = [];
+    const conditions = [eq(questions.userId, userId)];
     if (subject) conditions.push(eq(questions.subject, subject));
     if (lesson) conditions.push(eq(questions.lesson, lesson));
     if (topic) conditions.push(eq(questions.topic, topic));
@@ -91,7 +95,7 @@ export async function POST(req: NextRequest) {
       conditions.push(like(questions.tags, `%"${escaped}"%`));
     }
 
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const where = and(...conditions);
     const rows = db.select({ id: questions.id }).from(questions).where(where).all();
     pool = rows.map((r) => r.id);
   }
@@ -144,7 +148,7 @@ export async function POST(req: NextRequest) {
         provider: "bank",
         model: "bank",
         createdAt: now,
-        userId: null,
+        userId,
       })
       .run();
 

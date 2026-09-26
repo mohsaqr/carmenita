@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
+import { requireUser } from "@/lib/auth";
 
 /**
  * GET /api/trash — list all soft-deleted quizzes.
@@ -13,7 +14,10 @@ import { db } from "@/db/client";
  * Returns the same shape as `GET /api/quizzes` plus a `deletedAt` field.
  * Sort order: most recently deleted first.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const rows = db.all<{
     id: string;
     title: string;
@@ -46,6 +50,7 @@ export async function GET() {
     FROM quizzes q
     LEFT JOIN documents d ON d.id = q.document_id
     WHERE q.deleted_at IS NOT NULL
+      AND q.user_id = ${userId}
     ORDER BY q.deleted_at DESC
   `);
 

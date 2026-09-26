@@ -4,6 +4,7 @@ import { and, desc, eq, inArray, like } from "drizzle-orm";
 import { db } from "@/db/client";
 import { questionSets, questions } from "@/db/schema";
 import { CreateQuestionSchema } from "@/lib/validation";
+import { requireUser } from "@/lib/auth";
 
 /**
  * GET /api/bank/questions — list questions from the global bank with
@@ -22,6 +23,9 @@ import { CreateQuestionSchema } from "@/lib/validation";
  * Returns: { questions: Question[], total: number }
  */
 export async function GET(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const sp = req.nextUrl.searchParams;
   const topic = sp.get("topic");
   const subject = sp.get("subject");
@@ -53,7 +57,8 @@ export async function GET(req: NextRequest) {
   const folder = sp.get("folder");
   const limit = Math.min(parseInt(sp.get("limit") || "500", 10) || 500, 2000);
 
-  const conditions = [];
+  // Private bank: only the signed-in user's questions.
+  const conditions = [eq(questions.userId, userId)];
   if (topic) conditions.push(eq(questions.topic, topic));
   if (subject) conditions.push(eq(questions.subject, subject));
   if (lesson) conditions.push(eq(questions.lesson, lesson));
@@ -73,7 +78,10 @@ export async function GET(req: NextRequest) {
     conditions.push(
       inArray(
         questions.setId,
-        db.select({ id: questionSets.id }).from(questionSets).where(eq(questionSets.folder, folder)),
+        db
+          .select({ id: questionSets.id })
+          .from(questionSets)
+          .where(and(eq(questionSets.folder, folder), eq(questionSets.userId, userId))),
       ),
     );
   }
@@ -82,7 +90,7 @@ export async function GET(req: NextRequest) {
     if (ids.length > 0) conditions.push(inArray(questions.id, ids));
   }
 
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const where = and(...conditions);
 
   const rows = db
     .select()
@@ -103,6 +111,9 @@ export async function GET(req: NextRequest) {
  * row gets source_type="manual" and no parent or document link.
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -151,7 +162,7 @@ export async function POST(req: NextRequest) {
       parentQuestionId: null,
       variationType: null,
       createdAt: now,
-      userId: null,
+      userId,
     })
     .run();
 

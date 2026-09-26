@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
 import { documents } from "@/db/schema";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { extractText } from "@/lib/doc-extract";
 import { CreateDocumentSchema } from "@/lib/validation";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/documents — upload + extract a document.
@@ -12,6 +13,9 @@ import { CreateDocumentSchema } from "@/lib/validation";
  * Returns: { id, filename, charCount, truncated, createdAt }
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -66,7 +70,7 @@ export async function POST(req: NextRequest) {
     charCount: extracted.charCount,
     truncated: extracted.truncated,
     createdAt: now,
-    userId: null,
+    userId,
   }).run();
 
   return NextResponse.json({
@@ -81,7 +85,10 @@ export async function POST(req: NextRequest) {
 /**
  * GET /api/documents — list all documents (without the full text).
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const rows = db
     .select({
       id: documents.id,
@@ -91,6 +98,7 @@ export async function GET() {
       createdAt: documents.createdAt,
     })
     .from(documents)
+    .where(eq(documents.userId, userId))
     .orderBy(desc(documents.createdAt))
     .all();
 

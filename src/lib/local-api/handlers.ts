@@ -1036,7 +1036,7 @@ function findOrCreateLocalSet(name: string, folder: unknown): { id: string; crea
 
 export function listSets() {
   const rows = queryAll<Record<string, unknown>>(
-    `SELECT s.id, s.name, s.folder, s.created_at, COUNT(q.id) AS n
+    `SELECT s.id, s.name, s.folder, s.received_from, s.created_at, COUNT(q.id) AS n
        FROM question_sets s LEFT JOIN questions q ON q.set_id = s.id
       GROUP BY s.id
       ORDER BY s.folder IS NULL, lower(s.folder), lower(s.name), s.created_at`,
@@ -1046,6 +1046,7 @@ export function listSets() {
       id: r.id,
       name: r.name,
       folder: r.folder ?? null,
+      receivedFrom: r.received_from ?? null,
       createdAt: r.created_at,
       questionCount: Number(r.n),
     })),

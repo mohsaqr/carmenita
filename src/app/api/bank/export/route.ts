@@ -6,6 +6,7 @@ import { serializeGift } from "@/lib/formats/gift";
 import { serializeAiken } from "@/lib/formats/aiken";
 import { serializeMarkdown } from "@/lib/formats/markdown";
 import type { PortableQuestion } from "@/lib/formats/types";
+import { requireUser } from "@/lib/auth";
 
 /**
  * GET /api/bank/export?format=gift|aiken|markdown&[topic=]&[difficulty=]&[bloomLevel=]&[sourceType=]&[ids=]
@@ -20,6 +21,9 @@ import type { PortableQuestion } from "@/lib/formats/types";
  * and why. Markdown and GIFT round-trip losslessly.
  */
 export async function GET(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const sp = req.nextUrl.searchParams;
   const format = sp.get("format");
   if (format !== "gift" && format !== "aiken" && format !== "markdown") {
@@ -52,7 +56,8 @@ export async function GET(req: NextRequest) {
     | null;
   const idsCsv = sp.get("ids");
 
-  const conditions = [];
+  // Private bank: export only the signed-in user's questions.
+  const conditions = [eq(questions.userId, userId)];
   if (topic) conditions.push(eq(questions.topic, topic));
   if (subject) conditions.push(eq(questions.subject, subject));
   if (lesson) conditions.push(eq(questions.lesson, lesson));
@@ -67,7 +72,7 @@ export async function GET(req: NextRequest) {
     const ids = idsCsv.split(",").map((s) => s.trim()).filter(Boolean);
     if (ids.length > 0) conditions.push(inArray(questions.id, ids));
   }
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const where = and(...conditions);
 
   const rows = db.select().from(questions).where(where).all();
 

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BankVariationsBatchSchema } from "@/lib/validation";
 import { generateVariations } from "@/lib/llm-variations";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/bank/variations-batch
@@ -31,6 +32,9 @@ import { generateVariations } from "@/lib/llm-variations";
  * batch. Auth errors (401/403) DO abort.
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -54,7 +58,7 @@ export async function POST(req: NextRequest) {
   const parents = db
     .select()
     .from(questions)
-    .where(inArray(questions.id, parentIds))
+    .where(and(inArray(questions.id, parentIds), eq(questions.userId, userId)))
     .all();
 
   const parentMap = new Map(parents.map((p) => [p.id, p]));
@@ -131,7 +135,7 @@ export async function POST(req: NextRequest) {
       parentQuestionId: original.id,
       variationType,
       createdAt: now,
-      userId: null,
+      userId,
     }));
 
     db.insert(questions).values(rows).run();

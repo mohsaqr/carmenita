@@ -5,6 +5,9 @@ import { db } from "@/db/client";
  * SQL-backed quiz analytics. All functions are async and return plain
  * objects that serialize cleanly to JSON for API route responses.
  *
+ * Every function takes the signed-in user's id first: results are
+ * private, so each query only sees that user's attempts and content.
+ *
  * Handai's analytics.ts is focused on inter-rater agreement (Cohen's
  * kappa) which isn't relevant here — every query in this module is new.
  */
@@ -20,6 +23,7 @@ export interface ImprovementPoint {
 }
 
 export async function improvementCurve(
+  userId: string,
   quizId: string,
 ): Promise<ImprovementPoint[]> {
   const rows = db.all<{
@@ -33,6 +37,7 @@ export async function improvementCurve(
       score
     FROM attempts
     WHERE quiz_id = ${quizId}
+      AND user_id = ${userId}
       AND completed_at IS NOT NULL
       AND score IS NOT NULL
     ORDER BY completed_at ASC
@@ -56,7 +61,7 @@ export interface TopicStat {
   rate: number;
 }
 
-export async function topicBreakdown(quizId?: string): Promise<TopicStat[]> {
+export async function topicBreakdown(userId: string, quizId?: string): Promise<TopicStat[]> {
   const rows = db.all<{
     topic: string;
     total: number;
@@ -72,6 +77,7 @@ export async function topicBreakdown(quizId?: string): Promise<TopicStat[]> {
     JOIN questions q  ON q.id  = a.question_id
     JOIN attempts  at ON at.id = a.attempt_id
     WHERE at.completed_at IS NOT NULL
+      AND at.user_id = ${userId}
       ${quizId ? sql`AND at.quiz_id = ${quizId}` : sql``}
     GROUP BY q.topic
     ORDER BY rate ASC
@@ -90,6 +96,7 @@ export interface DifficultyStat {
 }
 
 export async function difficultyBreakdown(
+  userId: string,
   quizId?: string,
 ): Promise<DifficultyStat[]> {
   const rows = db.all<DifficultyStat>(sql`
@@ -102,6 +109,7 @@ export async function difficultyBreakdown(
     JOIN questions q  ON q.id  = a.question_id
     JOIN attempts  at ON at.id = a.attempt_id
     WHERE at.completed_at IS NOT NULL
+      AND at.user_id = ${userId}
       ${quizId ? sql`AND at.quiz_id = ${quizId}` : sql``}
     GROUP BY q.difficulty
     ORDER BY
@@ -132,7 +140,7 @@ export interface BloomStat {
   rate: number;
 }
 
-export async function bloomBreakdown(quizId?: string): Promise<BloomStat[]> {
+export async function bloomBreakdown(userId: string, quizId?: string): Promise<BloomStat[]> {
   const rows = db.all<{
     bloom_level: BloomLevelStr;
     total: number;
@@ -148,6 +156,7 @@ export async function bloomBreakdown(quizId?: string): Promise<BloomStat[]> {
     JOIN questions q  ON q.id  = a.question_id
     JOIN attempts  at ON at.id = a.attempt_id
     WHERE at.completed_at IS NOT NULL
+      AND at.user_id = ${userId}
       ${quizId ? sql`AND at.quiz_id = ${quizId}` : sql``}
     GROUP BY q.bloom_level
     ORDER BY
@@ -180,6 +189,7 @@ export interface SlowestQuestion {
 }
 
 export async function slowestQuestions(
+  userId: string,
   limit = 10,
 ): Promise<SlowestQuestion[]> {
   const rows = db.all<{
@@ -194,7 +204,9 @@ export async function slowestQuestions(
       AVG(a.time_ms) AS avg_ms,
       COUNT(*) AS answered
     FROM answers a
-    JOIN questions q ON q.id = a.question_id
+    JOIN questions q  ON q.id  = a.question_id
+    JOIN attempts  at ON at.id = a.attempt_id
+    WHERE at.user_id = ${userId}
     GROUP BY q.id
     HAVING answered > 0
     ORDER BY avg_ms DESC
@@ -219,7 +231,7 @@ export interface Overview {
   avgScore: number | null;
 }
 
-export async function overview(): Promise<Overview> {
+export async function overview(userId: string): Promise<Overview> {
   const [row] = db.all<{
     quiz_count: number;
     attempt_count: number;
@@ -227,10 +239,10 @@ export async function overview(): Promise<Overview> {
     avg_score: number | null;
   }>(sql`
     SELECT
-      (SELECT COUNT(*) FROM quizzes)                                        AS quiz_count,
-      (SELECT COUNT(*) FROM attempts WHERE completed_at IS NOT NULL)        AS attempt_count,
-      (SELECT COUNT(*) FROM documents)                                      AS document_count,
-      (SELECT AVG(score) FROM attempts WHERE completed_at IS NOT NULL)      AS avg_score
+      (SELECT COUNT(*) FROM quizzes WHERE user_id = ${userId})                                    AS quiz_count,
+      (SELECT COUNT(*) FROM attempts WHERE completed_at IS NOT NULL AND user_id = ${userId})      AS attempt_count,
+      (SELECT COUNT(*) FROM documents WHERE user_id = ${userId})                                  AS document_count,
+      (SELECT AVG(score) FROM attempts WHERE completed_at IS NOT NULL AND user_id = ${userId})    AS avg_score
   `);
 
   return {
@@ -256,6 +268,7 @@ export interface NeedsReviewQuestion {
 }
 
 export async function needsReview(
+  userId: string,
   limit = 50,
 ): Promise<NeedsReviewQuestion[]> {
   const rows = db.all<{
@@ -279,6 +292,7 @@ export async function needsReview(
     JOIN questions q  ON q.id  = a.question_id
     JOIN attempts  at ON at.id = a.attempt_id
     WHERE at.completed_at IS NOT NULL
+      AND at.user_id = ${userId}
     GROUP BY q.id
     HAVING wrong > 0
     ORDER BY rate ASC, wrong DESC

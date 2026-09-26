@@ -1,18 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { documents } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { requireUser } from "@/lib/auth";
 
 /**
  * DELETE /api/documents/[id] — cascade-deletes document + quizzes +
  * questions + attempts + answers via ON DELETE CASCADE foreign keys.
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
-  const result = db.delete(documents).where(eq(documents.id, id)).run();
+  const result = db
+    .delete(documents)
+    .where(and(eq(documents.id, id), eq(documents.userId, userId)))
+    .run();
   if (result.changes === 0) {
     return NextResponse.json({ error: "Document not found" }, { status: 404 });
   }
@@ -23,11 +30,18 @@ export async function DELETE(
  * GET /api/documents/[id] — return the full document including text.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
-  const row = db.select().from(documents).where(eq(documents.id, id)).get();
+  const row = db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.id, id), eq(documents.userId, userId)))
+    .get();
   if (!row) {
     return NextResponse.json({ error: "Document not found" }, { status: 404 });
   }

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { GenerateFromTopicSchema } from "@/lib/validation";
 import { generateQuestionsFromTopic } from "@/lib/llm-topic";
 import { insertQuizAndQuestions } from "@/lib/db-helpers";
-import { getUserFromRequest } from "@/lib/auth";
 import { resolvePrompt } from "@/lib/settings-store";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/generate-from-topic
@@ -31,6 +31,9 @@ import { resolvePrompt } from "@/lib/settings-store";
  * can navigate the same way (`router.push('/quiz/' + data.quizId)`).
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -77,7 +80,7 @@ export async function POST(req: NextRequest) {
       temperature,
       systemPromptOverride:
         systemPromptOverride ??
-        resolvePrompt(getUserFromRequest(req)?.id, "carmenita.mcq.topic"),
+        resolvePrompt(userId, "carmenita.mcq.topic"),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown generation error";
@@ -93,6 +96,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { quizId, questionCount } = insertQuizAndQuestions({
+    userId,
     title,
     settings,
     provider,

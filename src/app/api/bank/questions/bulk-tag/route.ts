@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BulkTagSchema } from "@/lib/validation";
+import { requireUser } from "@/lib/auth";
 
 /**
  * PATCH /api/bank/questions/bulk-tag
@@ -22,6 +23,9 @@ import { BulkTagSchema } from "@/lib/validation";
  * add a junction table.
  */
 export async function PATCH(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -43,7 +47,7 @@ export async function PATCH(req: NextRequest) {
   const affected = db
     .select({ id: questions.id, tags: questions.tags })
     .from(questions)
-    .where(inArray(questions.id, ids))
+    .where(and(inArray(questions.id, ids), eq(questions.userId, userId)))
     .all();
 
   if (affected.length === 0) {

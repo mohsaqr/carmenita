@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
+import { requireUser } from "@/lib/auth";
 
 /**
  * GET /api/quizzes — list all quizzes with joined counts.
@@ -13,7 +14,10 @@ import { db } from "@/db/client";
  * is a LEFT JOIN because quizzes can exist without a source document
  * (assembled from the bank).
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const rows = db.all<{
     id: string;
     title: string;
@@ -44,6 +48,7 @@ export async function GET() {
     FROM quizzes q
     LEFT JOIN documents d ON d.id = q.document_id
     WHERE q.deleted_at IS NULL
+      AND q.user_id = ${userId}
     ORDER BY q.created_at DESC
   `);
 

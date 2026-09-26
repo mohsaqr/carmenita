@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, asc } from "drizzle-orm";
+import { and, eq, asc } from "drizzle-orm";
 import { db, sqlite } from "@/db/client";
 import { attempts, answers, questions, quizQuestions } from "@/db/schema";
 import { SubmitAttemptSchema } from "@/lib/validation";
+import { requireUser } from "@/lib/auth";
 
 /**
  * GET /api/attempts/[id] — fetch an attempt with its answers joined to
@@ -10,12 +11,19 @@ import { SubmitAttemptSchema } from "@/lib/validation";
  * results page.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
 
-  const attempt = db.select().from(attempts).where(eq(attempts.id, id)).get();
+  const attempt = db
+    .select()
+    .from(attempts)
+    .where(and(eq(attempts.id, id), eq(attempts.userId, userId)))
+    .get();
   if (!attempt) {
     return NextResponse.json({ error: "Attempt not found" }, { status: 404 });
   }
@@ -76,6 +84,9 @@ export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   const { id } = await context.params;
 
   let body: unknown;
@@ -93,7 +104,11 @@ export async function PATCH(
     );
   }
 
-  const attempt = db.select().from(attempts).where(eq(attempts.id, id)).get();
+  const attempt = db
+    .select()
+    .from(attempts)
+    .where(and(eq(attempts.id, id), eq(attempts.userId, userId)))
+    .get();
   if (!attempt) {
     return NextResponse.json({ error: "Attempt not found" }, { status: 404 });
   }

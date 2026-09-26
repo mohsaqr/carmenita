@@ -88,14 +88,18 @@ function makeLegacyDb(file: string): Database.Database {
   return db;
 }
 
-function insertQuestion(setId: string | null, id = randomUUID()) {
+// The account that owns the set/import fixtures below (private banks).
+const OWNER = auth.upsertUser("set-owner", "owner-pass-1");
+const OWNER_TOKEN = auth.createSession(OWNER.id).token;
+
+function insertQuestion(setId: string | null, id = randomUUID(), userId: string = OWNER.id) {
   sqlite
     .prepare(
       `INSERT INTO questions (id, type, question, options, correct_answer, explanation, difficulty,
-         bloom_level, topic, tags, source_passage, source_type, set_id, created_at)
-       VALUES (?, 'mcq-single', 'Q?', '["a","b"]', '0', '', 'easy', 'remember', 't', '[]', '', 'markdown-import', ?, ?)`,
+         bloom_level, topic, tags, source_passage, source_type, set_id, created_at, user_id)
+       VALUES (?, 'mcq-single', 'Q?', '["a","b"]', '0', '', 'easy', 'remember', 't', '[]', '', 'markdown-import', ?, ?, ?)`,
     )
-    .run(id, setId, new Date().toISOString());
+    .run(id, setId, new Date().toISOString(), userId);
   return id;
 }
 
@@ -117,10 +121,13 @@ const MD_ONE_QUESTION = serializeMarkdown([
   },
 ]);
 
-function importReq(body: unknown) {
+function importReq(body: unknown, token: string | null = OWNER_TOKEN) {
   return new NextRequest("http://localhost/api/bank/import", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { cookie: `${auth.SESSION_COOKIE}=${token}` } : {}),
+    },
     body: JSON.stringify(body),
   });
 }
@@ -283,22 +290,22 @@ describe("per-user settings", () => {
 
 describe("question sets", () => {
   it("findOrCreateSet is idempotent per (name, folder), case-insensitive", () => {
-    const a = sets.findOrCreateSet("Chapter 1", "Pathology");
-    const b = sets.findOrCreateSet("  chapter 1 ", "pathology");
-    const c = sets.findOrCreateSet("Chapter 1", null);
-    const d = sets.findOrCreateSet("Chapter 1", "  ");
+    const a = sets.findOrCreateSet(OWNER.id, "Chapter 1", "Pathology");
+    const b = sets.findOrCreateSet(OWNER.id, "  chapter 1 ", "pathology");
+    const c = sets.findOrCreateSet(OWNER.id, "Chapter 1", null);
+    const d = sets.findOrCreateSet(OWNER.id, "Chapter 1", "  ");
     expect(a.created).toBe(true);
     expect(b).toEqual({ id: a.id, created: false });
     expect(c.id).not.toBe(a.id); // same name, different folder = different set
     expect(d).toEqual({ id: c.id, created: false }); // blank folder == no folder
-    expect(() => sets.findOrCreateSet("   ", null)).toThrow();
+    expect(() => sets.findOrCreateSet(OWNER.id, "   ", null)).toThrow();
   });
 
   it("listSets counts questions and orders folders first, alphabetically", () => {
-    const s1 = sets.findOrCreateSet("Zeta set", "anatomy");
+    const s1 = sets.findOrCreateSet(OWNER.id, "Zeta set", "anatomy");
     insertQuestion(s1.id);
     insertQuestion(s1.id);
-    const listed = sets.listSets();
+    const listed = sets.listSets(OWNER.id);
     expect(listed.find((s) => s.id === s1.id)?.questionCount).toBe(2);
     const folders = listed.map((s) => s.folder);
     const firstNull = folders.indexOf(null);
@@ -308,49 +315,49 @@ describe("question sets", () => {
   });
 
   it("updateSet renames (syncing source_label) and moves between folders", () => {
-    const s = sets.findOrCreateSet("Old name", "tmp");
+    const s = sets.findOrCreateSet(OWNER.id, "Old name", "tmp");
     const qid = insertQuestion(s.id);
-    const renamed = sets.updateSet(s.id, { name: "New name", folder: "" });
+    const renamed = sets.updateSet(OWNER.id, s.id, { name: "New name", folder: "" });
     expect(renamed).toMatchObject({ id: s.id, name: "New name", folder: null, questionCount: 1 });
     const label = sqlite.prepare("SELECT source_label FROM questions WHERE id = ?").get(qid) as {
       source_label: string;
     };
     expect(label.source_label).toBe("New name");
-    expect(sets.updateSet("missing-id", { name: "x" })).toBeNull();
-    expect(() => sets.updateSet(s.id, { name: " " })).toThrow();
+    expect(sets.updateSet(OWNER.id, "missing-id", { name: "x" })).toBeNull();
+    expect(() => sets.updateSet(OWNER.id, s.id, { name: " " })).toThrow();
   });
 
   it("deleteSet removes the set, its questions and their quiz links, nothing else", () => {
-    const doomed = sets.findOrCreateSet("Doomed", "tmp");
-    const keep = sets.findOrCreateSet("Keeper", "tmp");
+    const doomed = sets.findOrCreateSet(OWNER.id, "Doomed", "tmp");
+    const keep = sets.findOrCreateSet(OWNER.id, "Keeper", "tmp");
     const q1 = insertQuestion(doomed.id);
     const q2 = insertQuestion(doomed.id);
     const qKeep = insertQuestion(keep.id);
     const quizId = randomUUID();
     sqlite
       .prepare(
-        `INSERT INTO quizzes (id, title, settings, provider, model, created_at) VALUES (?, 'Q', '{}', 'bank', 'bank', ?)`,
+        `INSERT INTO quizzes (id, title, settings, provider, model, created_at, user_id) VALUES (?, 'Q', '{}', 'bank', 'bank', ?, ?)`,
       )
-      .run(quizId, new Date().toISOString());
+      .run(quizId, new Date().toISOString(), OWNER.id);
     const link = sqlite.prepare("INSERT INTO quiz_questions (quiz_id, question_id, idx) VALUES (?, ?, ?)");
     link.run(quizId, q1, 0);
     link.run(quizId, qKeep, 1);
 
-    expect(sets.deleteSet(doomed.id)).toEqual({ questionsDeleted: 2 });
+    expect(sets.deleteSet(OWNER.id, doomed.id)).toEqual({ questionsDeleted: 2 });
     const remaining = (sql: string, ...p: string[]) =>
       (sqlite.prepare(sql).get(...p) as { n: number }).n;
     expect(remaining("SELECT COUNT(*) n FROM questions WHERE id IN (?, ?)", q1, q2)).toBe(0);
     expect(remaining("SELECT COUNT(*) n FROM questions WHERE id = ?", qKeep)).toBe(1);
     expect(remaining("SELECT COUNT(*) n FROM quiz_questions WHERE quiz_id = ?", quizId)).toBe(1);
     expect(remaining("SELECT COUNT(*) n FROM question_sets WHERE id = ?", doomed.id)).toBe(0);
-    expect(sets.deleteSet(doomed.id)).toBeNull();
+    expect(sets.deleteSet(OWNER.id, doomed.id)).toBeNull();
   });
 
   it("renameFolder moves every set in a folder", () => {
-    sets.findOrCreateSet("A", "Histo");
-    sets.findOrCreateSet("B", "histo");
-    expect(sets.renameFolder("HISTO", "Histology")).toBe(2);
-    expect(sets.listSets().filter((s) => s.folder === "Histology")).toHaveLength(2);
+    sets.findOrCreateSet(OWNER.id, "A", "Histo");
+    sets.findOrCreateSet(OWNER.id, "B", "histo");
+    expect(sets.renameFolder(OWNER.id, "HISTO", "Histology")).toBe(2);
+    expect(sets.listSets(OWNER.id).filter((s) => s.folder === "Histology")).toHaveLength(2);
   });
 });
 
@@ -369,7 +376,7 @@ describe("POST /api/bank/import (named sets)", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toMatchObject({ imported: 1, setCreated: true });
-    const set = sets.listSets().find((s) => s.id === data.setId);
+    const set = sets.listSets(OWNER.id).find((s) => s.id === data.setId);
     expect(set).toMatchObject({ name: "Capitals", folder: "Geography", questionCount: 1 });
     const q = sqlite.prepare("SELECT set_id, source_label FROM questions WHERE id = ?").get(data.ids[0]);
     expect(q).toEqual({ set_id: data.setId, source_label: "Capitals" });
@@ -381,14 +388,14 @@ describe("POST /api/bank/import (named sets)", () => {
     );
     const data = await res.json();
     expect(data.setCreated).toBe(false);
-    expect(sets.listSets().find((s) => s.id === data.setId)?.questionCount).toBe(2);
+    expect(sets.listSets(OWNER.id).find((s) => s.id === data.setId)?.questionCount).toBe(2);
   });
 
   it("leaves no empty set behind when the text has no questions", async () => {
-    const before = sets.listSets().length;
+    const before = sets.listSets(OWNER.id).length;
     const res = await importRoute(importReq({ format: "markdown", text: "nothing here", setName: "Ghost" }));
     expect(res.status).toBe(400);
-    expect(sets.listSets().length).toBe(before);
+    expect(sets.listSets(OWNER.id).length).toBe(before);
   });
 });
 

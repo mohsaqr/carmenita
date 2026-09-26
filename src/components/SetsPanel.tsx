@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Folder, FolderOpen, Layers, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Folder, FolderOpen, Layers, MoreHorizontal, Pencil, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +20,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { SetNameFields, type SetSummary } from "@/components/SetNameFields";
 
 /** What the bank is currently narrowed to. */
@@ -46,6 +54,27 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
   const [editName, setEditName] = useState("");
   const [editFolder, setEditFolder] = useState("");
   const [saving, setSaving] = useState(false);
+  // Other accounts to send copies to. null = not available (static
+  // build has no accounts) → the "Send a copy" action is hidden.
+  const [otherUsers, setOtherUsers] = useState<string[] | null>(null);
+  const [sending, setSending] = useState<SetSummary | null>(null);
+  const [recipient, setRecipient] = useState("");
+  const [sendBusy, setSendBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/users")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { users?: string[] } | null) => {
+        if (!cancelled) setOtherUsers(data?.users ?? null);
+      })
+      .catch(() => {
+        // No accounts endpoint (static build) — sending stays hidden.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const groups = new Map<string | null, SetSummary[]>();
   sets.forEach((s) => groups.set(s.folder, [...(groups.get(s.folder) ?? []), s]));
@@ -78,6 +107,31 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
       toast.error(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openSend(s: SetSummary) {
+    setSending(s);
+    setRecipient("");
+  }
+
+  async function handleSend() {
+    if (!sending || !recipient) return;
+    setSendBusy(true);
+    try {
+      const res = await fetch(`/api/bank/sets/${sending.id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toUsername: recipient }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
+      toast.success(`Sent a copy of "${sending.name}" (${data.questionsCopied} questions) to ${data.sentTo}`);
+      setSending(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setSendBusy(false);
     }
   }
 
@@ -159,6 +213,11 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
                   onClick={() => onScopeChange({ kind: "set", id: s.id })}
                 >
                   <span className="truncate">{s.name}</span>
+                  {s.receivedFrom && (
+                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                      from {s.receivedFrom}
+                    </span>
+                  )}
                   <span className="ml-auto text-xs text-muted-foreground">{s.questionCount}</span>
                 </button>
                 <DropdownMenu>
@@ -172,6 +231,12 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
                       <Pencil className="h-4 w-4" />
                       Rename / move to folder
                     </DropdownMenuItem>
+                    {otherUsers !== null && (
+                      <DropdownMenuItem onClick={() => openSend(s)} disabled={otherUsers.length === 0}>
+                        <Send className="h-4 w-4" />
+                        {otherUsers.length === 0 ? "Send a copy (no other users yet)" : "Send a copy to…"}
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem variant="destructive" onClick={() => void handleDelete(s)}>
                       <Trash2 className="h-4 w-4" />
@@ -184,6 +249,43 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
           </div>
         ))}
       </CardContent>
+
+      <Dialog open={sending !== null} onOpenChange={(open) => !open && setSending(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send a copy</DialogTitle>
+            <DialogDescription>
+              {sending
+                ? `"${sending.name}" (${sending.questionCount} questions) will be copied into their bank. They get their own copy — your set is not changed or shared.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="send-recipient">Send to</Label>
+            <Select value={recipient} onValueChange={setRecipient}>
+              <SelectTrigger id="send-recipient" className="w-full">
+                <SelectValue placeholder="Choose a user" />
+              </SelectTrigger>
+              <SelectContent>
+                {(otherUsers ?? []).map((u) => (
+                  <SelectItem key={u} value={u}>
+                    {u}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSending(null)} disabled={sendBusy}>
+              Cancel
+            </Button>
+            <Button onClick={handleSend} disabled={sendBusy || !recipient}>
+              <Send className="h-4 w-4" />
+              {sendBusy ? "Sending…" : "Send copy"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>

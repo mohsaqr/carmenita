@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "@/db/client";
 import { questions, quizzes, quizQuestions } from "@/db/schema";
 import { CreateQuizFromBankSchema } from "@/lib/validation";
+import { requireUser } from "@/lib/auth";
 
 /**
  * POST /api/bank/quiz
@@ -15,6 +16,9 @@ import { CreateQuizFromBankSchema } from "@/lib/validation";
  * we're not generating anything — just assembling).
  */
 export async function POST(req: NextRequest) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const userId = auth.user.id;
   let body: unknown;
   try {
     body = await req.json();
@@ -36,7 +40,7 @@ export async function POST(req: NextRequest) {
   const existing = db
     .select({ id: questions.id })
     .from(questions)
-    .where(inArray(questions.id, questionIds))
+    .where(and(inArray(questions.id, questionIds), eq(questions.userId, userId)))
     .all();
   const existingSet = new Set(existing.map((q) => q.id));
   const missing = questionIds.filter((id) => !existingSet.has(id));
@@ -63,7 +67,7 @@ export async function POST(req: NextRequest) {
       provider: "bank",
       model: "bank",
       createdAt: now,
-      userId: null,
+      userId,
     }).run();
 
     db.insert(quizQuestions).values(

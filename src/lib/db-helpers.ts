@@ -29,6 +29,8 @@ import type {
  */
 
 export interface InsertQuizOptions {
+  /** Owner of the new quiz and questions (private bank). */
+  userId: string;
   title: string;
   settings: QuizSettings;
   provider: ProviderConfig;
@@ -49,6 +51,7 @@ export interface InsertQuizResult {
 
 export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResult {
   const {
+    userId,
     title,
     settings,
     provider,
@@ -109,7 +112,7 @@ export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResul
     sourceDocumentId: sourceDocumentId ?? null,
     sourceLabel: sourceLabel ?? null,
     createdAt: now,
-    userId: null,
+    userId,
     _idx: idx,
   }));
 
@@ -123,7 +126,7 @@ export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResul
         provider: provider.providerType,
         model: provider.defaultModel,
         createdAt: now,
-        userId: null,
+        userId,
       })
       .run();
 

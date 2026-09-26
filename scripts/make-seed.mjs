@@ -40,6 +40,15 @@ const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND 
 SENSITIVE_TABLES.forEach((t) => {
   if (exists.get(t)) db.prepare(`DELETE FROM ${t}`).run();
 });
+// Content is per-user on the server. The seed publishes no account ids;
+// the first account created from it takes ownership (create-user.mjs).
+["question_sets", "questions", "quizzes", "attempts", "documents"].forEach((t) => {
+  if (exists.get(t)) db.prepare(`UPDATE ${t} SET user_id = NULL`).run();
+});
+if (exists.get("question_sets")) {
+  const cols = db.prepare("PRAGMA table_info(question_sets)").all().map((c) => c.name);
+  if (cols.includes("received_from")) db.prepare("UPDATE question_sets SET received_from = NULL").run();
+}
 db.exec("VACUUM");
 const counts = ["questions", "question_sets", "quizzes", "attempts"]
   .filter((t) => exists.get(t))
