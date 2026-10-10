@@ -54,13 +54,19 @@ describe("UMCH full match — the official worked examples", () => {
     expect(umch("A,B,C,D", "A,B,C,D,E")).toBe(0);
   });
 
+  it("all options correct and all picked → full marks (not cancelled)", () => {
+    expect(umch("A,B,C,D,E", "A,B,C,D,E")).toBe(10);
+    expect(umch("A,B,C,D,E", "A,B,C,D")).toBe(8); //  (4+0) x 2
+    expect(umch("A,B,C,D,E", "A")).toBe(0); //        one option still cancels
+  });
+
   it("score is always within 0..10 and 10 only for the exact answer", () => {
-    // Every correct-set of size 2..4 × every non-empty selection.
+    // Every correct-set of size 2..5 × every non-empty selection.
     const subsets = Array.from({ length: 31 }, (_, m) => m + 1).map((m) =>
       [0, 1, 2, 3, 4].filter((i) => m & (1 << i)),
     );
     subsets
-      .filter((c) => c.length >= 2 && c.length <= 4)
+      .filter((c) => c.length >= 2)
       .forEach((correct) =>
         subsets.forEach((sel) => {
           const p = scoreQuestion("umch", "mcq-multi", correct, sel, 5);

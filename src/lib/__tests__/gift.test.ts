@@ -163,6 +163,41 @@ Essay question. {}`;
     expect(warnings.length).toBeGreaterThan(0);
   });
 
+  it("imports an all-`=` answer group as an all-correct multi-answer question", () => {
+    // The shape DeepSeek emits for "every option is correct" — 55 of 186
+    // questions in a real lecture file were skipped as short-answer.
+    const input = `::L6-S03-Q01:: Restrictive lung diseases can be caused by affections of: {
+=Respiratory centers
+=Respiratory tracts
+=Thoracic cage
+=Pleural diseases
+=Lung diseases
+}`;
+    const { questions, warnings } = parseGift(input);
+    expect(warnings).toHaveLength(0);
+    expect(questions).toHaveLength(1);
+    expect(questions[0].type).toBe("mcq-multi");
+    expect(questions[0].options).toHaveLength(5);
+    expect(questions[0].correctAnswer).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("still skips a single-`=` short-answer question", () => {
+    const { questions, warnings } = parseGift(`Capital of France? {=Paris}`);
+    expect(questions).toHaveLength(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/Short-answer/);
+  });
+
+  it("names the skipped question in its warning", () => {
+    const input = `::L6-S99-Q01:: Capital of France? {=Paris}
+
+Untitled essay prompt here {}`;
+    const { warnings } = parseGift(input);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain('"L6-S99-Q01" (Capital of France?)');
+    expect(warnings[1]).toContain('question "Untitled essay prompt here"');
+  });
+
   it("extracts title as topic when no category is set", () => {
     const input = `::Capitals::What is the capital of France? {=Paris ~London}`;
     const { questions } = parseGift(input);

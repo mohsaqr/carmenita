@@ -84,12 +84,31 @@ export function parseGift(text: string): GiftParseResult {
       if (q) questions.push(q);
     } catch (err) {
       warnings.push(
-        `Skipped question: ${err instanceof Error ? err.message : String(err)}`,
+        `Skipped ${describeBlock(block)}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
   return { questions, warnings };
+}
+
+/**
+ * Name a block in a warning so the user can find it in their file:
+ * `"L6-S03-Q01" (Restrictive lung diseases can be caused…)`, or just the
+ * opening words when the question has no `::title::`.
+ */
+function describeBlock(block: string): string {
+  const firstLine =
+    block
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith("//")) ?? "";
+  const titled = firstLine.match(/^::(.*?)::\s*(.*)$/);
+  const title = titled ? titled[1].trim() : "";
+  const stem = (titled ? titled[2] : firstLine).replace(/\s*\{.*$/, "").trim();
+  const short = stem.length > 40 ? `${stem.slice(0, 40)}…` : stem;
+  if (title) return short ? `"${title}" (${short})` : `"${title}"`;
+  return short ? `question "${short}"` : "question";
 }
 
 /** Split GIFT text into question blocks separated by blank lines. */
@@ -197,12 +216,15 @@ function parseGiftBlock(
     throw new Error("No answers found");
   }
 
-  // Short answer has only = entries, no ~. If all are =, and no ~ appears,
-  // it's a short-answer — skip.
+  // Only `=` entries and no `~`: a single `=` is a short-answer question
+  // (skip). Two or more is how chatbots write "every option is correct" —
+  // strict Moodle would read it as short-answer with alternatives, but
+  // Carmenita has no short-answer type, so keep it as an all-correct
+  // multi-answer question rather than drop it.
   const hasWrong = answerEntries.some((a) => a.marker === "~");
-  const hasCorrect = answerEntries.some((a) => a.marker === "=");
-  if (!hasWrong) {
-    if (hasCorrect) throw new Error("Short-answer questions are not supported");
+  const correctCount = answerEntries.filter((a) => a.marker === "=").length;
+  if (!hasWrong && correctCount < 2) {
+    if (correctCount === 1) throw new Error("Short-answer questions are not supported");
     throw new Error("Answer group has no options");
   }
 

@@ -13,7 +13,8 @@
  *   umch            UMCH "full match": (correct picked + wrong left
  *                   unpicked) / options — ×2 out of 10 for 5 options.
  *                   Cancelled (0) when exactly one option or every option
- *                   is picked.
+ *                   is picked — except that picking every option scores
+ *                   full marks when every option is correct.
  *   partial         correct picked / number correct, but 0 as soon as
  *                   any wrong option is picked (1 of 2 correct → 0.5).
  *   cancelling      (correct picked − wrong picked) / number correct,
@@ -27,7 +28,7 @@ export const SCORING_LABELS: Record<ScoringMethod, { name: string; description: 
   umch: {
     name: "UMCH full match",
     description:
-      "Multi-answer: (correct picked + wrong left unpicked) × 2, out of 10. Picking only one option, or all options, scores 0. Single-answer questions: all or nothing.",
+      "Multi-answer: (correct picked + wrong left unpicked) × 2, out of 10. Picking only one option, or all options, scores 0 (unless every option is correct, then picking all is full marks). Single-answer questions: all or nothing.",
   },
   partial: {
     name: "Partial credit",
@@ -100,6 +101,9 @@ export function scoreQuestion(
     case "all-or-nothing":
       return correctPicked === k && wrongPicked === 0 ? 1 : 0;
     case "umch": {
+      // Picking every option cancels the question — unless every option
+      // really is correct, where picking them all is the right answer.
+      if (sel.size === optionCount && k === optionCount) return 1;
       if (sel.size === 1 || sel.size === optionCount) return 0; // cancelled
       const wrongLeftUnpicked = optionCount - k - wrongPicked;
       return (correctPicked + wrongLeftUnpicked) / optionCount;
