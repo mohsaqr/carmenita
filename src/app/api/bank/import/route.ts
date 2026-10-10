@@ -3,10 +3,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BankImportSchema } from "@/lib/validation";
-import { parseGift } from "@/lib/formats/gift";
-import { parseAiken } from "@/lib/formats/aiken";
-import { parseMarkdown } from "@/lib/formats/markdown";
-import { importWarnings } from "@/lib/formats/import-warnings";
+import { parseImport } from "@/lib/formats/parse-import";
 import type { QuestionSource } from "@/db/schema";
 import { findOrCreateSet } from "@/lib/question-sets";
 import { requireUser } from "@/lib/auth";
@@ -42,13 +39,8 @@ export async function POST(req: NextRequest) {
 
   const { format, text, setName, folder } = parsed.data;
 
-  const result =
-    format === "gift"
-      ? parseGift(text)
-      : format === "aiken"
-        ? parseAiken(text)
-        : parseMarkdown(text);
-  const { questions: parsedQuestions, warnings } = result;
+  // Falls back to another format when the chosen one finds nothing.
+  const { questions: parsedQuestions, warnings, format: usedFormat } = parseImport(format, text);
 
   if (parsedQuestions.length === 0) {
     return NextResponse.json(
@@ -62,9 +54,9 @@ export async function POST(req: NextRequest) {
 
   const baseTime = Date.now();
   const sourceType: QuestionSource =
-    format === "gift"
+    usedFormat === "gift"
       ? "gift-import"
-      : format === "aiken"
+      : usedFormat === "aiken"
         ? "aiken-import"
         : "markdown-import";
 
@@ -106,7 +98,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     imported: rows.length,
-    warnings: importWarnings(parsedQuestions, warnings),
+    warnings,
     ids: rows.map((r) => r.id),
     setId: set.id,
     setCreated: set.created,

@@ -15,10 +15,10 @@
  * proxy and no server to run LLM calls.
  */
 import { flushLocalDb, queryAll, queryOne, run } from "./db";
-import { parseGift, serializeGift } from "@/lib/formats/gift";
-import { parseAiken, serializeAiken } from "@/lib/formats/aiken";
-import { parseMarkdown, serializeMarkdown } from "@/lib/formats/markdown";
-import { importWarnings } from "@/lib/formats/import-warnings";
+import { serializeGift } from "@/lib/formats/gift";
+import { serializeAiken } from "@/lib/formats/aiken";
+import { serializeMarkdown } from "@/lib/formats/markdown";
+import { parseImport } from "@/lib/formats/parse-import";
 import type { PortableQuestion } from "@/lib/formats/types";
 import {
   isScoringMethod,
@@ -818,12 +818,8 @@ export async function importBank(body: {
     return { status: 400, body: { error: "text is required" } };
   }
 
-  const result =
-    format === "gift"
-      ? parseGift(text)
-      : format === "aiken"
-        ? parseAiken(text)
-        : parseMarkdown(text);
+  // Falls back to another format when the chosen one finds nothing.
+  const result = parseImport(format, text);
 
   if (result.questions.length === 0) {
     return {
@@ -835,9 +831,9 @@ export async function importBank(body: {
   const baseTime = Date.now();
   const total = result.questions.length;
   const sourceType =
-    format === "gift"
+    result.format === "gift"
       ? "gift-import"
-      : format === "aiken"
+      : result.format === "aiken"
         ? "aiken-import"
         : "markdown-import";
 
@@ -889,7 +885,7 @@ export async function importBank(body: {
   return {
     body: {
       imported: ids.length,
-      warnings: importWarnings(result.questions, result.warnings),
+      warnings: result.warnings,
       ids,
       setId: set.id,
       setCreated: set.created,
