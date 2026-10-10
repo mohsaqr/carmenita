@@ -18,6 +18,7 @@ import { flushLocalDb, queryAll, queryOne, run } from "./db";
 import { parseGift, serializeGift } from "@/lib/formats/gift";
 import { parseAiken, serializeAiken } from "@/lib/formats/aiken";
 import { parseMarkdown, serializeMarkdown } from "@/lib/formats/markdown";
+import { importWarnings } from "@/lib/formats/import-warnings";
 import type { PortableQuestion } from "@/lib/formats/types";
 import {
   isScoringMethod,
@@ -888,7 +889,7 @@ export async function importBank(body: {
   return {
     body: {
       imported: ids.length,
-      warnings: result.warnings,
+      warnings: importWarnings(result.questions, result.warnings),
       ids,
       setId: set.id,
       setCreated: set.created,

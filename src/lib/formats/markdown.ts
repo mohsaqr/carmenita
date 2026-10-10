@@ -240,9 +240,9 @@ function parseBlock(block: string): PortableQuestion | null {
   if (correctIndices.length === 0) {
     throw new Error("No option marked as correct ([x])");
   }
-  if (correctIndices.length === options.length) {
-    throw new Error("All options marked correct — at least one must be wrong");
-  }
+  // All options correct is allowed (GIFT imports them too, and they must
+  // round-trip through Markdown export); the import route warns about them
+  // via importWarnings() instead of rejecting.
 
   // Determine type
   let type: QuestionType;

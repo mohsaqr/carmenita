@@ -6,6 +6,7 @@ import { BankImportSchema } from "@/lib/validation";
 import { parseGift } from "@/lib/formats/gift";
 import { parseAiken } from "@/lib/formats/aiken";
 import { parseMarkdown } from "@/lib/formats/markdown";
+import { importWarnings } from "@/lib/formats/import-warnings";
 import type { QuestionSource } from "@/db/schema";
 import { findOrCreateSet } from "@/lib/question-sets";
 import { requireUser } from "@/lib/auth";
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     imported: rows.length,
-    warnings,
+    warnings: importWarnings(parsedQuestions, warnings),
     ids: rows.map((r) => r.id),
     setId: set.id,
     setCreated: set.created,

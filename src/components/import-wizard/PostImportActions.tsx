@@ -183,17 +183,25 @@ export function PostImportActions({ imported, onImportMore }: PostImportActionsP
             Imported {imported.count} question
             {imported.count === 1 ? "" : "s"} into &ldquo;{imported.setName}&rdquo;. What next?
           </h2>
-          {imported.warnings.length > 0 && (
-            <p className="text-xs text-amber-600 mt-1">
-              {imported.warnings.length} warning
-              {imported.warnings.length === 1 ? "" : "s"} during import
-            </p>
-          )}
         </div>
         <Button variant="outline" size="sm" onClick={onImportMore}>
           Import more
         </Button>
       </div>
+
+      {imported.warnings.length > 0 && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+          <p className="font-medium">
+            {imported.warnings.length} warning
+            {imported.warnings.length === 1 ? "" : "s"} during import
+          </p>
+          <ul className="mt-1 max-h-48 list-disc space-y-1 overflow-y-auto pl-5">
+            {imported.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {!provider && <NoProviderWarning />}
 

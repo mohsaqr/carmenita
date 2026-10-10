@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseMarkdown, serializeMarkdown } from "@/lib/formats/markdown";
+import { importWarnings } from "@/lib/formats/import-warnings";
 import type { PortableQuestion } from "@/lib/formats/types";
 
 const canonicalSingle: PortableQuestion = {
@@ -335,15 +336,20 @@ describe("parseMarkdown — error handling", () => {
     expect(warnings[0]).toMatch(/correct/i);
   });
 
-  it("warns when all options are marked correct", () => {
+  it("imports an all-correct question (import route warns, parser does not reject)", () => {
     const md = `## Q1
 **Question:** Test?
 - [x] A
 - [x] B
 `;
     const { questions, warnings } = parseMarkdown(md);
-    expect(questions).toHaveLength(0);
-    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings).toHaveLength(0);
+    expect(questions).toHaveLength(1);
+    expect(questions[0].type).toBe("mcq-multi");
+    expect(questions[0].correctAnswer).toEqual([0, 1]);
+    expect(importWarnings(questions, warnings)).toEqual([
+      expect.stringContaining("every option marked correct"),
+    ]);
   });
 
   it("warns when question stem is missing", () => {
