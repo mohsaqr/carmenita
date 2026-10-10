@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { CarmenitaHeart } from "@/components/CarmenitaHeart";
 
 const PRIMARY_LINKS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -75,6 +76,7 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
       <div className="flex h-14 items-center gap-2 border-b px-4 font-semibold">
         <GraduationCap className="h-5 w-5" />
         <span>Carmenita</span>
+        <CarmenitaHeart />
       </div>
 
       {/* Navigation */}

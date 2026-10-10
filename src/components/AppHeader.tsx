@@ -5,6 +5,7 @@ import Link from "next/link";
 import { GraduationCap, KeyRound, LogOut, Menu, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { CarmenitaHeart } from "@/components/CarmenitaHeart";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 
 interface AppHeaderProps {
@@ -38,6 +39,7 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
       >
         <GraduationCap className="h-5 w-5" />
         <span>Carmenita</span>
+        <CarmenitaHeart />
       </Link>
       {username && (
         <div className="ml-auto flex items-center gap-2 text-sm">
