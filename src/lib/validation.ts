@@ -223,9 +223,10 @@ export const UpdateSetSchema = z
   .object({
     name: z.string().trim().min(1).max(200).optional(),
     folder: z.string().trim().max(200).nullable().optional(),
+    archived: z.boolean().optional(),
   })
-  .refine((v) => v.name !== undefined || v.folder !== undefined, {
-    message: "Provide name and/or folder",
+  .refine((v) => v.name !== undefined || v.folder !== undefined || v.archived !== undefined, {
+    message: "Provide name, folder and/or archived",
   });
 
 // ─────────────────────────────────────────────────────────────────────────────

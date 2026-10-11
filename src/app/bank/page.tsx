@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState, useMemo, useCallback } from "react";
+import { Suspense, useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,6 +71,11 @@ function BankPageInner() {
   });
   const [sets, setSets] = useState<SetSummary[]>([]);
   const [scope, setScope] = useState<SetScope>({ kind: "all" });
+  // The list API caps a response; true when "All questions" hit the cap.
+  const [capped, setCapped] = useState(false);
+  // reload() reads the scope through a ref so its identity stays stable.
+  const scopeRef = useRef<SetScope>(scope);
+  scopeRef.current = scope;
   const [expanded, setExpanded] = useState<string | null>(null);
   const [variationTarget, setVariationTarget] = useState<Question | null>(null);
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
@@ -101,14 +106,23 @@ function BankPageInner() {
   // old `async function` declaration form that was here previously).
   const reload = useCallback(async () => {
     try {
+      // Ask the server for just the questions in view: the API returns at most
+      // LIMIT rows (newest first), so a set scope must be filtered server-side
+      // or older sets would look empty. Archived sets only show when opened.
+      const LIMIT = 2000;
+      const sc = scopeRef.current;
+      const qs = new URLSearchParams({ limit: String(LIMIT) });
+      if (sc.kind === "set") qs.set("setId", sc.id);
+      else if (sc.kind === "folder") qs.set("folder", sc.folder);
       const [bankRes, taxRes, setsRes] = await Promise.all([
-        fetch("/api/bank/questions"),
+        fetch(`/api/bank/questions?${qs}`),
         fetch("/api/bank/taxonomy"),
         fetch("/api/bank/sets"),
       ]);
       if (!bankRes.ok) throw new Error(`Failed to load bank (${bankRes.status})`);
       const data = await bankRes.json();
       setAll(data.questions);
+      setCapped(sc.kind === "all" && data.questions.length >= LIMIT);
       if (taxRes.ok) {
         const tax = await taxRes.json();
         setTaxonomy(tax);
@@ -122,9 +136,11 @@ function BankPageInner() {
     }
   }, []);
 
+  // Reload on first render and whenever the scope changes.
+  const scopeKey = JSON.stringify(scope);
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, scopeKey]);
 
   /**
    * Handle deep-link from /create Import tab:
@@ -497,6 +513,13 @@ function BankPageInner() {
           {counts.variation > 0 && <Badge variant="secondary">{counts.variation} variations</Badge>}
         </div>
       </header>
+
+      {capped && (
+        <p className="text-sm text-amber-700 dark:text-amber-400">
+          Showing the newest 2,000 questions. Open a set or folder, or archive the sets you are not
+          using, to see the rest.
+        </p>
+      )}
 
       <SetsPanel
         sets={sets}

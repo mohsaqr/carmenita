@@ -20,6 +20,8 @@ export interface SetSummary {
   receivedFrom: string | null;
   createdAt: string;
   questionCount: number;
+  /** Hidden from the bank list and quick quizzes; restorable. */
+  archived: boolean;
 }
 
 /** Trim; empty → null. Folders are labels, so blank means "no folder". */
@@ -38,6 +40,7 @@ export function listSets(userId: string): SetSummary[] {
       folder: questionSets.folder,
       receivedFrom: questionSets.receivedFrom,
       createdAt: questionSets.createdAt,
+      archived: questionSets.archived,
       questionCount: count(questions.id),
     })
     .from(questionSets)
@@ -52,6 +55,17 @@ export function listSets(userId: string): SetSummary[] {
       asc(questionSets.createdAt),
     )
     .all();
+}
+
+/**
+ * SQL condition for "this question is not in one of the user's archived
+ * sets" (questions with no set always pass). Used by every bank listing
+ * that should de-crowd archived material.
+ */
+export function notArchivedQuestion(userId: string) {
+  return sql`(${questions.setId} IS NULL OR ${questions.setId} NOT IN (
+    SELECT ${questionSets.id} FROM ${questionSets}
+    WHERE ${questionSets.archived} = 1 AND ${questionSets.userId} = ${userId}))`;
 }
 
 /** True when `setId` exists and belongs to `userId`. */
@@ -103,16 +117,17 @@ export function findOrCreateSet(
 export function updateSet(
   userId: string,
   id: string,
-  patch: { name?: string; folder?: string | null },
+  patch: { name?: string; folder?: string | null; archived?: boolean },
 ): SetSummary | null {
   if (!ownsSet(userId, id)) return null;
-  const set: { name?: string; folder?: string | null } = {};
+  const set: { name?: string; folder?: string | null; archived?: boolean } = {};
   if (patch.name !== undefined) {
     const n = patch.name.trim();
     if (!n) throw new Error("Set name must not be empty");
     set.name = n;
   }
   if (patch.folder !== undefined) set.folder = normalizeFolder(patch.folder);
+  if (patch.archived !== undefined) set.archived = patch.archived;
   if (Object.keys(set).length > 0) {
     db.update(questionSets).set(set).where(and(eq(questionSets.id, id), ownedBy(userId))).run();
     // Keep the per-question label in step with the set name.

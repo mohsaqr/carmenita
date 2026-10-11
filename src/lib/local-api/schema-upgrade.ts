@@ -43,7 +43,8 @@ export function upgradeLocalSchema(db: SqlAdapter): { changed: boolean } {
       name text NOT NULL,
       folder text,
       created_at text NOT NULL,
-      user_id text
+      user_id text,
+      archived integer DEFAULT 0 NOT NULL
     )`);
     db.exec(`CREATE INDEX idx_question_sets_folder ON question_sets (folder)`);
     changed = true;
@@ -79,6 +80,12 @@ export function upgradeLocalSchema(db: SqlAdapter): { changed: boolean } {
   }
   if (!hasColumn("attempts", "scoring_method")) {
     db.exec(`ALTER TABLE attempts ADD scoring_method text`);
+    changed = true;
+  }
+
+  // Migration 0010 (archive sets): hidden-but-restorable flag.
+  if (!hasColumn("question_sets", "archived")) {
+    db.exec(`ALTER TABLE question_sets ADD archived integer DEFAULT 0 NOT NULL`);
     changed = true;
   }
 

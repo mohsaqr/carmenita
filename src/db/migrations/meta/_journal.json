@@ -71,6 +71,13 @@
       "when": 1790451964356,
       "tag": "0009_scoring_methods",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791744658909,
+      "tag": "0010_archive_sets",
+      "breakpoints": true
     }
   ]
 }

@@ -89,6 +89,9 @@ export const questionSets = sqliteTable(
     createdAt: text("created_at").notNull(),
     // Owner. Every user has a private bank; all content tables carry it.
     userId: text("user_id"),
+    // Archived sets are hidden from the bank list, taxonomy filters and
+    // quick quizzes, but keep all their questions and can be restored.
+    archived: integer("archived", { mode: "boolean" }).notNull().default(false),
   },
   (t) => ({
     byFolder: index("idx_question_sets_folder").on(t.folder),

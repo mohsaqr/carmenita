@@ -1,0 +1,1 @@
+ALTER TABLE `question_sets` ADD `archived` integer DEFAULT false NOT NULL;

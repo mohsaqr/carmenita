@@ -5,6 +5,7 @@ import { db, sqlite } from "@/db/client";
 import { questions, quizzes, quizQuestions } from "@/db/schema";
 import { QuickQuizSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
+import { notArchivedQuestion } from "@/lib/question-sets";
 
 /**
  * POST /api/bank/quick-quiz
@@ -81,7 +82,8 @@ export async function POST(req: NextRequest) {
       .all();
     pool = existing.map((r) => r.id);
   } else {
-    const conditions = [eq(questions.userId, userId)];
+    // Filter mode never draws from archived sets (explicit candidateIds still can).
+    const conditions = [eq(questions.userId, userId), notArchivedQuestion(userId)];
     if (subject) conditions.push(eq(questions.subject, subject));
     if (lesson) conditions.push(eq(questions.lesson, lesson));
     if (topic) conditions.push(eq(questions.topic, topic));

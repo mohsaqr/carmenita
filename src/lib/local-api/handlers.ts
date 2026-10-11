@@ -441,16 +441,18 @@ export async function submitAttempt(
 
 export function getTaxonomy() {
   const subjects = queryAll<{ subject: string }>(
-    `SELECT DISTINCT subject FROM questions WHERE subject IS NOT NULL AND subject != '' ORDER BY subject`,
+    `SELECT DISTINCT subject FROM questions WHERE (set_id IS NULL OR set_id NOT IN (SELECT id FROM question_sets WHERE archived = 1)) AND subject IS NOT NULL AND subject != '' ORDER BY subject`,
   ).map((r) => r.subject);
   const lessons = queryAll<{ lesson: string }>(
-    `SELECT DISTINCT lesson FROM questions WHERE lesson IS NOT NULL AND lesson != '' ORDER BY lesson`,
+    `SELECT DISTINCT lesson FROM questions WHERE (set_id IS NULL OR set_id NOT IN (SELECT id FROM question_sets WHERE archived = 1)) AND lesson IS NOT NULL AND lesson != '' ORDER BY lesson`,
   ).map((r) => r.lesson);
   const topics = queryAll<{ topic: string }>(
-    `SELECT DISTINCT topic FROM questions WHERE topic IS NOT NULL AND topic != '' ORDER BY topic`,
+    `SELECT DISTINCT topic FROM questions WHERE (set_id IS NULL OR set_id NOT IN (SELECT id FROM question_sets WHERE archived = 1)) AND topic IS NOT NULL AND topic != '' ORDER BY topic`,
   ).map((r) => r.topic);
   const tags = queryAll<{ value: string }>(
-    `SELECT DISTINCT value FROM questions, json_each(questions.tags) ORDER BY value`,
+    `SELECT DISTINCT value FROM questions, json_each(questions.tags)
+      WHERE (questions.set_id IS NULL OR questions.set_id NOT IN (SELECT id FROM question_sets WHERE archived = 1))
+      ORDER BY value`,
   ).map((r) => r.value);
   return { subjects, lessons, topics, tags };
 }
@@ -478,6 +480,10 @@ export function listBankQuestions(url: URL) {
   if (sp.get("setId")) push("set_id = ?", sp.get("setId"));
   if (sp.get("folder")) {
     push("set_id IN (SELECT id FROM question_sets WHERE folder = ?)", sp.get("folder"));
+  }
+  // Archived sets drop out of the general listing (same rule as the server route).
+  if (!sp.get("setId") && !sp.get("ids") && sp.get("includeArchived") !== "1") {
+    where.push("(set_id IS NULL OR set_id NOT IN (SELECT id FROM question_sets WHERE archived = 1))");
   }
   const idsCsv = sp.get("ids");
   if (idsCsv) {
@@ -1059,7 +1065,7 @@ function findOrCreateLocalSet(name: string, folder: unknown): { id: string; crea
 
 export function listSets() {
   const rows = queryAll<Record<string, unknown>>(
-    `SELECT s.id, s.name, s.folder, s.received_from, s.created_at, COUNT(q.id) AS n
+    `SELECT s.id, s.name, s.folder, s.received_from, s.created_at, s.archived, COUNT(q.id) AS n
        FROM question_sets s LEFT JOIN questions q ON q.set_id = s.id
       GROUP BY s.id
       ORDER BY s.folder IS NULL, lower(s.folder), lower(s.name), s.created_at`,
@@ -1072,13 +1078,14 @@ export function listSets() {
       receivedFrom: r.received_from ?? null,
       createdAt: r.created_at,
       questionCount: Number(r.n),
+      archived: Number(r.archived) === 1,
     })),
   };
 }
 
-export async function updateSet(id: string, body: { name?: unknown; folder?: unknown }) {
+export async function updateSet(id: string, body: { name?: unknown; folder?: unknown; archived?: unknown }) {
   const sets: string[] = [];
-  const params: Array<string | null> = [];
+  const params: Array<string | number | null> = [];
   if (body.name !== undefined) {
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!name) return { status: 400, body: { error: "Set name must not be empty" } };
@@ -1089,7 +1096,12 @@ export async function updateSet(id: string, body: { name?: unknown; folder?: unk
     sets.push("folder = ?");
     params.push(normalizeFolder(body.folder));
   }
-  if (sets.length === 0) return { status: 400, body: { error: "Provide name and/or folder" } };
+  if (body.archived !== undefined) {
+    if (typeof body.archived !== "boolean") return { status: 400, body: { error: "archived must be true or false" } };
+    sets.push("archived = ?");
+    params.push(body.archived ? 1 : 0);
+  }
+  if (sets.length === 0) return { status: 400, body: { error: "Provide name, folder and/or archived" } };
   const changes = run(`UPDATE question_sets SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
   if (changes === 0) return { status: 404, body: { error: "Set not found" } };
   if (typeof body.name === "string") {

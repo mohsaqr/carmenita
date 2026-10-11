@@ -1,7 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Folder, FolderOpen, Layers, MoreHorizontal, Pencil, Send, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderOpen,
+  Layers,
+  MoreHorizontal,
+  Pencil,
+  Send,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,7 +59,8 @@ interface SetsPanelProps {
 /**
  * Folder → set browser on the bank page. Click a folder or set to
  * narrow the question list; each set can be renamed, moved to another
- * folder, or deleted together with all its questions.
+ * folder, archived (hidden from the bank, restorable) or deleted
+ * together with all its questions.
  */
 export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelProps) {
   const [editing, setEditing] = useState<SetSummary | null>(null);
@@ -60,6 +73,7 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
   const [sending, setSending] = useState<SetSummary | null>(null);
   const [recipient, setRecipient] = useState("");
   const [sendBusy, setSendBusy] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,8 +90,12 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
     };
   }, []);
 
+  // Archived sets leave the main list; they live in the collapsible
+  // "Archived" section below, where they can be opened or restored.
+  const liveSets = sets.filter((s) => !s.archived);
+  const archivedSets = sets.filter((s) => s.archived);
   const groups = new Map<string | null, SetSummary[]>();
-  sets.forEach((s) => groups.set(s.folder, [...(groups.get(s.folder) ?? []), s]));
+  liveSets.forEach((s) => groups.set(s.folder, [...(groups.get(s.folder) ?? []), s]));
 
   function openEdit(s: SetSummary) {
     setEditing(s);
@@ -135,6 +153,41 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
     }
   }
 
+  async function patchArchived(ids: string[], archived: boolean): Promise<void> {
+    const results = await Promise.all(
+      ids.map((id) =>
+        fetch(`/api/bank/sets/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archived }),
+        }),
+      ),
+    );
+    const failed = results.find((r) => !r.ok);
+    if (failed) throw new Error(`${archived ? "Archive" : "Restore"} failed (${failed.status})`);
+  }
+
+  async function handleArchive(targets: SetSummary[], archived: boolean, label: string) {
+    const ids = targets.map((t) => t.id);
+    try {
+      await patchArchived(ids, archived);
+      if (archived && scope.kind === "set" && ids.includes(scope.id)) onScopeChange({ kind: "all" });
+      onChanged();
+      toast.success(archived ? `Archived ${label}` : `Restored ${label}`, {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            patchArchived(ids, !archived)
+              .then(() => onChanged())
+              .catch((err) => toast.error(err instanceof Error ? err.message : "Undo failed"));
+          },
+        },
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update the archive");
+    }
+  }
+
   async function handleDelete(s: SetSummary) {
     const ok = confirm(
       `Delete the set "${s.name}" and all ${s.questionCount} of its questions?\n\n` +
@@ -160,6 +213,63 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
       active ? "bg-accent text-accent-foreground font-medium" : "hover:bg-muted"
     }`;
 
+  function renderSetRow(s: SetSummary, indent: boolean) {
+    return (
+      <div key={s.id} className={`flex items-center ${indent ? "pl-5" : ""} ${s.archived ? "opacity-70" : ""}`}>
+        <button
+          type="button"
+          className={rowClass(isActive({ kind: "set", id: s.id }))}
+          onClick={() => onScopeChange({ kind: "set", id: s.id })}
+        >
+          <span className="truncate">{s.name}</span>
+          {s.receivedFrom && (
+            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+              from {s.receivedFrom}
+            </span>
+          )}
+          <span className="ml-auto text-xs text-muted-foreground">{s.questionCount}</span>
+        </button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={s.archived ? `Restore ${s.name} from the archive` : `Archive ${s.name}`}
+          title={s.archived ? "Restore from archive" : "Archive (hide from the bank)"}
+          onClick={() => void handleArchive([s], !s.archived, `"${s.name}"`)}
+        >
+          {s.archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${s.name}`}>
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => openEdit(s)}>
+              <Pencil className="h-4 w-4" />
+              Rename / move to folder
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void handleArchive([s], !s.archived, `"${s.name}"`)}>
+              {s.archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
+              {s.archived ? "Restore from archive" : "Archive (hide from the bank)"}
+            </DropdownMenuItem>
+            {otherUsers !== null && (
+              <DropdownMenuItem onClick={() => openSend(s)} disabled={otherUsers.length === 0}>
+                <Send className="h-4 w-4" />
+                {otherUsers.length === 0 ? "Send a copy (no other users yet)" : "Send a copy to…"}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => void handleDelete(s)}>
+              <Trash2 className="h-4 w-4" />
+              Delete set and its questions
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -169,15 +279,20 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
         </CardTitle>
         <CardDescription>
           Every import is a named set. Click one to show only its questions; use ⋯ to rename,
-          move to a folder, or delete it.
+          move to a folder, archive (hide it without deleting) or delete it.
         </CardDescription>
+        <p className="flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-sm text-muted-foreground">
+          <Archive className="h-4 w-4 shrink-0" />
+          Too crowded? Use the archive icon beside a set, or Archive on a folder, to tuck away what
+          you are not using. Nothing is deleted, and archived sets stay under Archived below.
+        </p>
       </CardHeader>
       <CardContent className="space-y-1">
         <button type="button" className={rowClass(isActive({ kind: "all" }))} onClick={() => onScopeChange({ kind: "all" })}>
           <Layers className="h-4 w-4 text-muted-foreground" />
           All questions
         </button>
-        {sets.length === 0 && (
+        {liveSets.length === 0 && archivedSets.length === 0 && (
           <p className="px-2 py-2 text-sm text-muted-foreground">
             No sets yet. Imports you name will appear here.
           </p>
@@ -185,69 +300,59 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
         {[...groups.entries()].map(([folder, folderSets]) => (
           <div key={folder ?? "__none__"} className="space-y-0.5">
             {folder !== null ? (
-              <button
-                type="button"
-                className={rowClass(isActive({ kind: "folder", folder }))}
-                onClick={() => onScopeChange({ kind: "folder", folder })}
-              >
-                {isActive({ kind: "folder", folder }) ? (
-                  <FolderOpen className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <Folder className="h-4 w-4 text-muted-foreground" />
-                )}
-                {folder}
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {folderSets.reduce((n, s) => n + s.questionCount, 0)}
-                </span>
-              </button>
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  className={rowClass(isActive({ kind: "folder", folder }))}
+                  onClick={() => onScopeChange({ kind: "folder", folder })}
+                >
+                  {isActive({ kind: "folder", folder }) ? (
+                    <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <Folder className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  {folder}
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {folderSets.reduce((n, s) => n + s.questionCount, 0)}
+                  </span>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Archive all ${folderSets.length} sets in ${folder}`}
+                  title={`Archive all ${folderSets.length} sets in this folder`}
+                  onClick={() => void handleArchive(folderSets, true, `${folderSets.length} sets in "${folder}"`)}
+                >
+                  <Archive className="h-4 w-4" />
+                  Archive
+                </Button>
+              </div>
             ) : (
               groups.size > 1 && (
                 <p className="px-2 pt-2 text-xs uppercase tracking-wide text-muted-foreground">No folder</p>
               )
             )}
-            {folderSets.map((s) => (
-              <div key={s.id} className={`flex items-center ${folder !== null ? "pl-5" : ""}`}>
-                <button
-                  type="button"
-                  className={rowClass(isActive({ kind: "set", id: s.id }))}
-                  onClick={() => onScopeChange({ kind: "set", id: s.id })}
-                >
-                  <span className="truncate">{s.name}</span>
-                  {s.receivedFrom && (
-                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                      from {s.receivedFrom}
-                    </span>
-                  )}
-                  <span className="ml-auto text-xs text-muted-foreground">{s.questionCount}</span>
-                </button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${s.name}`}>
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => openEdit(s)}>
-                      <Pencil className="h-4 w-4" />
-                      Rename / move to folder
-                    </DropdownMenuItem>
-                    {otherUsers !== null && (
-                      <DropdownMenuItem onClick={() => openSend(s)} disabled={otherUsers.length === 0}>
-                        <Send className="h-4 w-4" />
-                        {otherUsers.length === 0 ? "Send a copy (no other users yet)" : "Send a copy to…"}
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onClick={() => void handleDelete(s)}>
-                      <Trash2 className="h-4 w-4" />
-                      Delete set and its questions
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ))}
+            {folderSets.map((s) => renderSetRow(s, folder !== null))}
           </div>
         ))}
+        {archivedSets.length > 0 && (
+          <div className="space-y-0.5 pt-2">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted"
+              onClick={() => setShowArchived((v) => !v)}
+              aria-expanded={showArchived}
+            >
+              {showArchived ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              <Archive className="h-4 w-4" />
+              Archived
+              <span className="ml-auto text-xs">
+                {archivedSets.length} {archivedSets.length === 1 ? "set" : "sets"}
+              </span>
+            </button>
+            {showArchived && archivedSets.map((s) => renderSetRow(s, true))}
+          </div>
+        )}
       </CardContent>
 
       <Dialog open={sending !== null} onOpenChange={(open) => !open && setSending(null)}>

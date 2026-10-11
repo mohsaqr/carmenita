@@ -5,6 +5,7 @@ import { db } from "@/db/client";
 import { questionSets, questions } from "@/db/schema";
 import { CreateQuestionSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
+import { notArchivedQuestion } from "@/lib/question-sets";
 
 /**
  * GET /api/bank/questions — list questions from the global bank with
@@ -18,6 +19,8 @@ import { requireUser } from "@/lib/auth";
  *   ?ids=id1,id2,id3           — fetch specific questions (used by export)
  *   ?setId=<id>                — only questions in one set
  *   ?folder=pathology          — only questions in sets filed in that folder
+ *   ?includeArchived=1         — also list questions from archived sets
+ *                                (they are hidden by default, unless asked for by setId or ids)
  *   ?limit=200&offset=0        — pagination (default limit 500)
  *
  * Returns: { questions: Question[], total: number }
@@ -88,6 +91,12 @@ export async function GET(req: NextRequest) {
   if (idsCsv) {
     const ids = idsCsv.split(",").map((s) => s.trim()).filter(Boolean);
     if (ids.length > 0) conditions.push(inArray(questions.id, ids));
+  }
+  // De-crowd: archived sets drop out of the general listing. Asking for
+  // one set (or specific ids) still shows them, so an archived set can
+  // be opened and restored.
+  if (!setId && !idsCsv && sp.get("includeArchived") !== "1") {
+    conditions.push(notArchivedQuestion(userId));
   }
 
   const where = and(...conditions);

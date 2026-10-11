@@ -13,6 +13,8 @@ export interface SetSummary {
   receivedFrom?: string | null;
   createdAt: string;
   questionCount: number;
+  /** Hidden from the bank list; restorable from the Archived section. */
+  archived?: boolean;
 }
 
 interface SetNameFieldsProps {

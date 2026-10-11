@@ -442,6 +442,7 @@ describe("schema upgrade of pre-sets databases", () => {
     // Later schema additions the static build must also pick up.
     const cols = (t: string) => (db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string }>).map((c) => c.name);
     expect(cols("question_sets")).toContain("received_from");
+    expect(cols("question_sets")).toContain("archived");
     expect(cols("answers")).toContain("points");
     expect(cols("attempts")).toContain("scoring_method");
     db.close();
