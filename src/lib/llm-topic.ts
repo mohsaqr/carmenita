@@ -1,6 +1,8 @@
 import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
-import { getPrompt, renderPrompt } from "@/lib/prompts";
-import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
+import { getPrompt, purposeStyleBlock, renderPrompt } from "@/lib/prompts";
+import { parseQuestionArray } from "@/lib/question-schema";
+import { reviewGenerated, type ReviewedBatch } from "@/lib/question-quality";
+import { effectiveAllowedTypes, type QuestionPurpose, type QuestionStyle } from "@/lib/question-purpose";
 import type { ProviderConfig, QuestionType, Difficulty } from "@/types";
 
 /**
@@ -38,6 +40,8 @@ export interface TopicGenerationArgs {
    * re-asking the same things.
    */
   avoid?: string[];
+  purpose?: QuestionPurpose;
+  style?: QuestionStyle;
 }
 
 /** Cap on how much of the earlier batches the prompt repeats back. */
@@ -63,6 +67,8 @@ export function buildTopicPrompt(
     difficultyMix,
     systemPromptOverride,
     avoid = [],
+    purpose,
+    style,
   } = args;
 
   const template = systemPromptOverride ?? getPrompt("carmenita.mcq.topic");
@@ -77,25 +83,31 @@ export function buildTopicPrompt(
     level: level?.trim() || "undergraduate",
     objectives: objectives?.trim() || "(none specified)",
     mustInclude: mustInclude?.trim() || "(none specified)",
-    allowedTypes: allowedTypes.join(", "),
+    allowedTypes: effectiveAllowedTypes(purpose, allowedTypes).join(", "),
     difficultyMix: difficultyMixJson,
   });
 
+  const withPurpose = `${prompt}\n\n${purposeStyleBlock(purpose, style)}`;
   const asked = avoid
     .map((q) => q.replace(/\s+/g, " ").trim().slice(0, AVOID_MAX_CHARS))
     .filter(Boolean)
     .slice(-AVOID_MAX_ITEMS);
-  if (asked.length === 0) return prompt;
-  return `${prompt}
+  if (asked.length === 0) return withPurpose;
+  return `${withPurpose}
 
 ALREADY ASKED (earlier batches of this same quiz): do not repeat, paraphrase or test the exact same fact as any of these — cover other aspects of the topic.
 ${asked.map((q) => `- ${q}`).join("\n")}`;
 }
 
+/**
+ * One batch of topic questions, through the quality gate: questions that
+ * copy the pasted objectives / must-include notes, or repeat an earlier
+ * batch (`avoid`), are dropped and counted in `dropped`.
+ */
 export async function generateQuestionsFromTopic(
   args: TopicGenerationArgs,
-): Promise<ParsedQuestion[]> {
-  const { topic, count, provider, temperature } = args;
+): Promise<ReviewedBatch> {
+  const { topic, count, provider, temperature, objectives, mustInclude, avoid, purpose, allowedTypes } = args;
 
   if (
     !provider.apiKey &&
@@ -111,7 +123,6 @@ export async function generateQuestionsFromTopic(
     throw new Error("Topic is required for topic-based generation.");
   }
 
-
   const systemPrompt = buildTopicPrompt(args);
 
   const { output: raw } = await callLLM(
@@ -120,10 +131,13 @@ export async function generateQuestionsFromTopic(
     "Generate the questions now as a JSON array.",
   );
 
-  const parsed = parseQuestionArray(raw);
+  const reviewed = reviewGenerated(parseQuestionArray(raw), {
+    sources: [objectives ?? "", mustInclude ?? ""],
+    avoid,
+    allowedTypes: effectiveAllowedTypes(purpose, allowedTypes),
+  });
 
   // If we over-generated (shouldn't happen for topic mode but defensive),
   // trim to the requested count.
-  if (parsed.length > count) return parsed.slice(0, count);
-  return parsed;
+  return { ...reviewed, questions: reviewed.questions.slice(0, count) };
 }

@@ -41,6 +41,19 @@ import { NoProviderWarning } from "@/components/NoProviderWarning";
 import { useAppStore } from "@/lib/store";
 import type { QuestionType, GenerationJobState } from "@/types";
 import { batchSizes } from "@/lib/topic-batches";
+import { addDrops, dropsMessage, NO_DROPS, type QualityDrops } from "@/lib/question-quality";
+import {
+  DEFAULT_PURPOSE,
+  DEFAULT_STYLE,
+  PURPOSE_DIFFICULTY,
+  PURPOSE_LABELS,
+  QUESTION_PURPOSES,
+  QUESTION_STYLES,
+  STYLE_LABELS,
+  effectiveAllowedTypes,
+  type QuestionPurpose,
+  type QuestionStyle,
+} from "@/lib/question-purpose";
 
 /**
  * Unified creation hub. Four paths to getting questions into the bank:
@@ -111,6 +124,17 @@ function CreatePageInner() {
   const [defaultSubject, setDefaultSubject] = useState("");
   const [defaultLesson, setDefaultLesson] = useState("");
   const [defaultTags, setDefaultTags] = useState(""); // comma-separated
+  const [purpose, setPurpose] = useState<QuestionPurpose>(DEFAULT_PURPOSE);
+  const [style, setStyle] = useState<QuestionStyle>(DEFAULT_STYLE);
+
+  // A purpose pre-sets the difficulty mix; the fields stay editable after.
+  const choosePurpose = (next: QuestionPurpose) => {
+    setPurpose(next);
+    const mix = PURPOSE_DIFFICULTY[next];
+    setDifficultyEasy(mix.easy);
+    setDifficultyMedium(mix.medium);
+    setDifficultyHard(mix.hard);
+  };
 
   const parsedDefaultTags = useMemo(
     () =>
@@ -143,8 +167,10 @@ function CreatePageInner() {
 
   const settingsPayload = () => ({
     questionCount,
-    allowedTypes,
+    allowedTypes: effectiveAllowedTypes(purpose, allowedTypes),
     immediateFeedback,
+    purpose,
+    style,
     difficultyMix: {
       easy: difficultyEasy,
       medium: difficultyMedium,
@@ -229,7 +255,7 @@ function CreatePageInner() {
 
   async function handleGenerateDocument() {
     if (!docInfo || !provider) return;
-    if (allowedTypes.length === 0) {
+    if (effectiveAllowedTypes(purpose, allowedTypes).length === 0) {
       toast.error("Select at least one question type");
       return;
     }
@@ -246,7 +272,9 @@ function CreatePageInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Generation failed (${res.status})`);
       setJob({ status: "success", quizId: data.quizId });
-      toast.success(`Generated ${data.questionCount} questions`);
+      toast.success(`Generated ${data.questionCount} questions`, {
+        description: dropsMessage((data.dropped as QualityDrops | undefined) ?? NO_DROPS) || undefined,
+      });
       router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -263,7 +291,7 @@ function CreatePageInner() {
       toast.error("Topic name is required");
       return;
     }
-    if (allowedTypes.length === 0) {
+    if (effectiveAllowedTypes(purpose, allowedTypes).length === 0) {
       toast.error("Select at least one question type");
       return;
     }
@@ -283,6 +311,7 @@ function CreatePageInner() {
     // list what was already asked so batches don't repeat each other.
     let quizId: string | null = null;
     let made = 0;
+    let dropped: QualityDrops = NO_DROPS;
     const asked: string[] = [];
     // Sequential on purpose: each batch needs the quiz id and the
     // questions of the batches before it.
@@ -306,6 +335,7 @@ function CreatePageInner() {
         if (!res.ok) throw new Error(data.error || `Generation failed (${res.status})`);
         quizId = data.quizId as string;
         made += data.questionCount as number;
+        dropped = addDrops(dropped, (data.dropped as QualityDrops | undefined) ?? NO_DROPS);
         asked.push(...((data.questions as string[] | undefined) ?? []));
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
@@ -324,7 +354,7 @@ function CreatePageInner() {
 
     if (!quizId) return;
     setJob({ status: "success", quizId });
-    toast.success(`Generated ${made} questions`);
+    toast.success(`Generated ${made} questions`, { description: dropsMessage(dropped) || undefined });
     router.push(`/quiz?id=${quizId}`);
   }
 
@@ -520,24 +550,68 @@ function CreatePageInner() {
               </div>
             </div>
 
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="purpose">Purpose</Label>
+                <Select value={purpose} onValueChange={(v) => choosePurpose(v as QuestionPurpose)}>
+                  <SelectTrigger id="purpose">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {QUESTION_PURPOSES.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {PURPOSE_LABELS[p].name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{PURPOSE_LABELS[purpose].description}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="style">Style</Label>
+                <Select value={style} onValueChange={(v) => setStyle(v as QuestionStyle)}>
+                  <SelectTrigger id="style">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {QUESTION_STYLES.map((st) => (
+                      <SelectItem key={st} value={st}>
+                        {STYLE_LABELS[st].name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{STYLE_LABELS[style].description}</p>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label>Allowed question types</Label>
               <div className="space-y-2">
-                {ALL_TYPES.map((t) => (
-                  <label
-                    key={t.value}
-                    className="flex items-center gap-2 text-sm cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={allowedTypes.includes(t.value)}
-                      onChange={() => toggleType(t.value)}
-                      className="h-4 w-4"
-                    />
-                    {t.label}
-                  </label>
-                ))}
+                {ALL_TYPES.map((t) => {
+                  const locked = purpose === "exam" && t.value !== "mcq-single";
+                  return (
+                    <label
+                      key={t.value}
+                      className={`flex items-center gap-2 text-sm ${locked ? "text-muted-foreground" : "cursor-pointer"}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={effectiveAllowedTypes(purpose, allowedTypes).includes(t.value)}
+                        onChange={() => toggleType(t.value)}
+                        disabled={purpose === "exam"}
+                        className="h-4 w-4"
+                      />
+                      {t.label}
+                    </label>
+                  );
+                })}
               </div>
+              {purpose === "exam" && (
+                <p className="text-xs text-muted-foreground">
+                  Exams use single-best-answer questions only.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -637,7 +711,7 @@ function CreatePageInner() {
             disabled={
               busy ||
               !provider ||
-              allowedTypes.length === 0 ||
+              effectiveAllowedTypes(purpose, allowedTypes).length === 0 ||
               (tab === "topic" ? !topicName.trim() : !docInfo)
             }
             size="lg"

@@ -17,8 +17,9 @@ import { requireUser } from "@/lib/auth";
  *   defaultSubject?, defaultLesson?, defaultTags?,
  *   batchCount?, appendToQuizId?, avoid?
  * }
- * Returns: { quizId, questionCount, questions } — `questions` is this
- * batch's question texts, which the client passes back as `avoid`.
+ * Returns: { quizId, questionCount, questions, dropped } — `questions` is
+ * this batch's question texts, which the client passes back as `avoid`;
+ * `dropped` counts what the quality gate left out (question-quality.ts).
  *
  * Large runs are split by the client into batches (see TOPIC_BATCH_SIZE):
  * the first request creates the quiz, each later one sends
@@ -74,9 +75,9 @@ export async function POST(req: NextRequest) {
     avoid,
   } = parsed.data;
 
-  let parsedQuestions;
+  let generated;
   try {
-    parsedQuestions = await generateQuestionsFromTopic({
+    generated = await generateQuestionsFromTopic({
       topic,
       subject,
       level,
@@ -84,6 +85,8 @@ export async function POST(req: NextRequest) {
       mustInclude,
       count: batchCount ?? settings.questionCount,
       allowedTypes: settings.allowedTypes,
+      purpose: settings.purpose,
+      style: settings.style,
       difficultyMix: settings.difficultyMix,
       provider,
       temperature,
@@ -98,9 +101,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status });
   }
 
+  const { questions: parsedQuestions, dropped } = generated;
   if (parsedQuestions.length === 0) {
+    const copied = dropped.copied + dropped.duplicate > 0;
     return NextResponse.json(
-      { error: "No questions were generated — the LLM output was empty or malformed." },
+      {
+        error: copied
+          ? "Every generated question copied the pasted notes word for word or repeated an earlier one, so none were kept — try again, or shorten the pasted text."
+          : "No questions were generated — the LLM output was empty or malformed.",
+        dropped,
+      },
       { status: 502 },
     );
   }
@@ -130,5 +140,6 @@ export async function POST(req: NextRequest) {
     quizId: result.quizId,
     questionCount: result.questionCount,
     questions: parsedQuestions.map((q) => q.question),
+    dropped,
   });
 }

@@ -43,6 +43,8 @@ export const QuizSettingsSchema = z.object({
     })
     .optional(),
   immediateFeedback: z.boolean(),
+  purpose: z.enum(["formative", "training", "exam"]).optional(),
+  style: z.enum(["standard", "board"]).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

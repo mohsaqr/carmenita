@@ -159,4 +159,27 @@ describe("POST /api/generate-from-topic in batches", () => {
     const count = sqlite.prepare("SELECT count(*) n FROM quiz_questions WHERE quiz_id = ?").get(mine.quizId);
     expect(count).toEqual({ n: mine.questionCount });
   });
+
+  it("an exam run drops a true/false item the model wrote anyway", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      const items = [
+        question("Which drug selectively blocks serotonin uptake?"),
+        { ...question("SSRIs block the serotonin transporter."), type: "true-false", options: ["True", "False"], correctAnswer: 0 },
+      ];
+      return new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(items) }] }), { status: 200 });
+    }));
+    const res = await post(aliceToken, {
+      batchCount: 2,
+      settings: { ...body.settings, allowedTypes: ["mcq-single", "true-false"], purpose: "exam", style: "board" },
+    });
+    const data = await res.json();
+    expect(data.questionCount).toBe(1);
+    expect(data.dropped).toEqual({ copied: 0, duplicate: 0, wrongType: 1 });
+    const types = sqlite
+      .prepare("SELECT q.type FROM quiz_questions qq JOIN questions q ON q.id = qq.question_id WHERE qq.quiz_id = ?")
+      .all(data.quizId);
+    expect(types).toEqual([{ type: "mcq-single" }]);
+    const saved = sqlite.prepare("SELECT settings FROM quizzes WHERE id = ?").get(data.quizId) as { settings: string };
+    expect(JSON.parse(saved.settings)).toMatchObject({ purpose: "exam", style: "board" });
+  });
 });

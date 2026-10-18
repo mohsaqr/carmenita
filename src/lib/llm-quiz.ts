@@ -1,6 +1,8 @@
 import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
-import { getPrompt, renderPrompt } from "@/lib/prompts";
+import { getPrompt, purposeStyleBlock, renderPrompt } from "@/lib/prompts";
 import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
+import { addDrops, NO_DROPS, reviewGenerated, type QualityDrops, type ReviewedBatch } from "@/lib/question-quality";
+import { effectiveAllowedTypes } from "@/lib/question-purpose";
 import { chunkText, distributeQuestions } from "@/lib/chunk";
 import type { ProviderConfig, QuizSettings } from "@/types";
 
@@ -34,9 +36,15 @@ export interface GenerateQuizArgs {
   defaultLesson?: string | null;
 }
 
+/**
+ * Document / lecture generation, one LLM call per chunk. Each chunk's
+ * questions go through the quality gate against THAT chunk's text (so
+ * copied sentences are caught) and against every question kept so far
+ * (so chunks don't repeat each other).
+ */
 export async function generateQuizQuestions(
   args: GenerateQuizArgs,
-): Promise<ParsedQuestion[]> {
+): Promise<ReviewedBatch> {
   const {
     docText,
     provider,
@@ -54,32 +62,34 @@ export async function generateQuizQuestions(
     );
   }
 
-
   const template = systemPromptOverride ?? getPrompt(promptId);
+  const allowedTypes = effectiveAllowedTypes(settings.purpose, settings.allowedTypes);
+  const purposeBlock = purposeStyleBlock(settings.purpose, settings.style);
   const difficultyMixJson = JSON.stringify(
     settings.difficultyMix ?? { easy: 0.3, medium: 0.5, hard: 0.2 },
   );
-  const allowedTypesCsv = settings.allowedTypes.join(", ");
+  const allowedTypesCsv = allowedTypes.join(", ");
 
   const chunks = chunkText(docText);
   const perChunkCounts = distributeQuestions(chunks, settings.questionCount);
 
   const results: ParsedQuestion[] = [];
   const errors: string[] = [];
+  let dropped: QualityDrops = NO_DROPS;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     const count = perChunkCounts[i];
     if (count <= 0) continue;
 
-    const systemPrompt = renderPrompt(template, {
+    const systemPrompt = `${renderPrompt(template, {
       n: String(count),
       allowedTypes: allowedTypesCsv,
       difficultyMix: difficultyMixJson,
       text: chunk.text,
       defaultSubject: defaultSubject ?? "",
       defaultLesson: defaultLesson ?? "",
-    });
+    })}\n\n${purposeBlock}`;
 
     try {
       const { output: raw } = await callLLM(
@@ -87,8 +97,13 @@ export async function generateQuizQuestions(
         systemPrompt,
         "Generate the questions now as a JSON array.",
       );
-      const parsed = parseQuestionArray(raw);
-      results.push(...parsed);
+      const reviewed = reviewGenerated(parseQuestionArray(raw), {
+        sources: [chunk.text],
+        avoid: results.map((q) => q.question),
+        allowedTypes,
+      });
+      results.push(...reviewed.questions);
+      dropped = addDrops(dropped, reviewed.dropped);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`Chunk ${i + 1}/${chunks.length}: ${msg}`);
@@ -105,20 +120,6 @@ export async function generateQuizQuestions(
     );
   }
 
-  // De-dupe by question text
-  const seen = new Set<string>();
-  const deduped: ParsedQuestion[] = [];
-  for (const q of results) {
-    const key = q.question.trim().toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(q);
-  }
-
   // If we over-generated (distribution rounding), trim to the requested count
-  if (deduped.length > settings.questionCount) {
-    return deduped.slice(0, settings.questionCount);
-  }
-
-  return deduped;
+  return { questions: results.slice(0, settings.questionCount), dropped };
 }

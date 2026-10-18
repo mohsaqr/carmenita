@@ -72,9 +72,9 @@ export async function POST(req: NextRequest) {
     ? "carmenita.mcq.lecture"
     : "carmenita.mcq.document";
 
-  let parsedQuestions;
+  let generated;
   try {
-    parsedQuestions = await generateQuizQuestions({
+    generated = await generateQuizQuestions({
       docText: doc.text,
       provider,
       settings,
@@ -93,9 +93,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status });
   }
 
+  const { questions: parsedQuestions, dropped } = generated;
   if (parsedQuestions.length === 0) {
+    const copied = dropped.copied + dropped.duplicate > 0;
     return NextResponse.json(
-      { error: "No questions were generated — the LLM output was empty or malformed." },
+      {
+        error: copied
+          ? "Every generated question copied the document word for word or repeated another, so none were kept — try again."
+          : "No questions were generated — the LLM output was empty or malformed.",
+        dropped,
+      },
       { status: 502 },
     );
   }
@@ -114,5 +121,5 @@ export async function POST(req: NextRequest) {
     defaultTags,
   });
 
-  return NextResponse.json({ quizId, questionCount });
+  return NextResponse.json({ quizId, questionCount, dropped });
 }

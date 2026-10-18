@@ -40,6 +40,10 @@ export interface QuizSettings {
    * use the account default from Settings.
    */
   scoringMethod?: string;
+  /** What the quiz is for — shapes generation (see lib/question-purpose.ts). */
+  purpose?: "formative" | "training" | "exam";
+  /** "board" = NBME/USMLE item-writing style. */
+  style?: "standard" | "board";
 }
 
 export const quizzes = sqliteTable(

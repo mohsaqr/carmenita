@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildTopicPrompt } from "@/lib/llm-topic";
+import { purposeStyleBlock } from "@/lib/prompts";
 import type { QuestionType } from "@/types";
 
 /**
@@ -100,7 +101,10 @@ describe("buildTopicPrompt", () => {
       ...baseArgs,
       systemPromptOverride: "OVERRIDE: topic is {topic}",
     });
-    expect(p).toBe("OVERRIDE: topic is mitochondrial respiration");
+    // The custom template replaces the default; the purpose block still
+    // follows it, so Purpose/Style work with a customised prompt too.
+    expect(p).toBe(`OVERRIDE: topic is mitochondrial respiration\n\n${purposeStyleBlock()}`);
+    expect(p).not.toContain("expert educator");
   });
 
   it("leaves no unsubstituted placeholders when all fields are set", () => {

@@ -1,3 +1,4 @@
+import { DEFAULT_PURPOSE, DEFAULT_STYLE, type QuestionPurpose, type QuestionStyle } from "@/lib/question-purpose";
 /**
  * Prompt registry — the single place where all LLM system prompts live.
  *
@@ -59,10 +60,73 @@ const QUESTION_SHAPE = `Each question MUST include every one of these fields:
 - "question": the question text, clear and self-contained.
 - "options": an array of option strings. For "true-false" use exactly ["True", "False"]. For MCQ use 4 options (or 3 at minimum, 6 maximum).
 - "correctAnswer": for mcq-single and true-false, a 0-indexed number. For mcq-multi, an array of 0-indexed numbers (length >= 2, at least one wrong option).
-- "explanation": 1–2 sentences explaining why the correct answer is correct AND briefly noting why the best distractor is wrong. Pedagogical tone — treat the reader as someone who just answered incorrectly.
+- "explanation": 2–4 sentences. Say why the correct answer is correct (the mechanism or reasoning, not a restatement of the option), then why the most tempting distractor is wrong. Write for a learner who just picked that distractor.
 - "difficulty": "easy", "medium", or "hard".
 - "bloomLevel": one of "remember", "understand", "apply", "analyze", "evaluate", "create".
 - "sourcePassage": see the mode-specific rule below.`;
+
+// Shared item-writing standard for every generation prompt. The material a
+// user supplies (a document, slides, pasted notes) is what to TEST, not text
+// to copy back — recycled sentences make recognition items that a learner
+// answers by remembering wording rather than understanding.
+// question-quality.ts enforces the copying rule after generation.
+const ITEM_WRITING = `How to write the questions (this is what makes a quiz worth taking):
+
+Test understanding, not recognition of wording.
+- Never copy a sentence or a long phrase from the material into the question or the options. Restate ideas in your own words; a learner who memorised the text's wording without understanding it should not be able to answer.
+- Prefer questions that make the learner use an idea: apply it to a short concrete scenario or case, predict a consequence, explain a cause, compare two related things, or pick the best option for a given situation. Use plain recall only for facts a learner genuinely has to know by heart.
+- Across the batch, aim for roughly half the questions at "apply" or higher on Bloom's scale, and match bloomLevel honestly to what each question demands.
+- Each question tests one idea. Different questions test different ideas — never the same fact twice in different words.
+
+Write the stem so it can be answered before looking at the options.
+- One clear question or an incomplete statement, with everything needed to answer it. Put shared wording in the stem, not repeated in every option.
+- Ask positively. Avoid "Which is NOT…" / "All EXCEPT…" — they test reading more than knowledge.
+
+Make the options fair.
+- Distractors are things a learner who misunderstands would really choose: common misconceptions, confusable neighbours (a drug from the same class, a similar process, a reversed cause and effect), or a partly-correct answer that misses the key point.
+- All options are the same kind of thing, similar in length, detail and grammar, so none stands out. The correct answer must not be the longest, the most precise or the only hedged one.
+- No "all of the above", "none of the above", "both A and B", or joke options.
+- Exactly one option is defensibly correct for mcq-single; an expert should not be able to argue for a second.
+
+Get the facts right. If you are not confident a claim is accurate and standard, do not build a question on it.`;
+
+// Purpose and style blocks, appended after a rendered generation prompt
+// (default or user-overridden) by `purposeStyleBlock()`. Difficulty is left
+// to the request's difficulty mix, which the purpose only pre-sets in the UI.
+export const PURPOSE_BLOCKS: Record<QuestionPurpose, string> = {
+  formative: `PURPOSE: formative check. These questions help a learner find gaps while they are still learning, so the feedback matters more than the score.
+- Keep stems short and focused on one idea.
+- Mix recall of facts a learner must know (about half) with understanding and simple application.
+- Make the explanation the most useful part: why the correct answer is right, and for each wrong option, the misunderstanding that would lead someone to pick it.`,
+  training: `PURPOSE: training. These questions build skill through practice.
+- Mix short questions with brief scenarios that make the learner use an idea.
+- About half at "apply" or higher.
+- Explanations: why the correct answer is right, and why the most tempting wrong option is wrong.`,
+  exam: `PURPOSE: exam (high stakes). These questions must reliably separate learners who understand the topic from those who do not, and be fair to both.
+- Single-best-answer items only; do not write true-false or multiple-answer items.
+- About 70% of stems present a scenario or case that requires applying or analysing knowledge.
+- Exactly one option is unarguably best; every distractor is plausible to a learner with a specific gap, and none is a trick.
+- Test important ideas, never obscure detail.
+- Explanations are one or two sentences, for review after the exam.`,
+};
+
+export const BOARD_STYLE_BLOCK = `STYLE: board exam. Follow the NBME item-writing guidelines used for USMLE: single-best-answer items.
+- Choose the stem to fit the content:
+  - Clinical content (diagnosis, management, adverse effects in patients): a clinical vignette, in this order: age and sex, setting, presenting complaint, relevant history and medications, examination findings, then test results if needed.
+  - Basic science (mechanisms, pharmacology, physiology, biochemistry): an experimental or laboratory scenario, a description of data to interpret, or a mechanism question. No patient is needed; do not invent one just to have a case.
+- Lead-in: one clear question, e.g. "Which of the following is the most likely diagnosis / mechanism / drug / explanation for these findings?" It must be answerable with the options covered.
+- Options: 4–5 short options of the same kind (all diagnoses, all drugs or all mechanisms), in a logical order (alphabetical or numerical).
+- Test applying and integrating knowledge, not isolated recall of a fact.`;
+
+/** The text appended to a generation prompt for this purpose and style. */
+export function purposeStyleBlock(
+  purpose: QuestionPurpose = DEFAULT_PURPOSE,
+  style: QuestionStyle = DEFAULT_STYLE,
+): string {
+  return style === "board"
+    ? `${PURPOSE_BLOCKS[purpose]}\n\n${BOARD_STYLE_BLOCK}`
+    : PURPOSE_BLOCKS[purpose];
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. DOCUMENT mode — generate from an uploaded source passage.
@@ -70,10 +134,12 @@ const QUESTION_SHAPE = `Each question MUST include every one of these fields:
 // ─────────────────────────────────────────────────────────────────────────────
 const MCQ_DOCUMENT_DEFAULT = `You are an expert educator generating multiple-choice questions from an uploaded source passage.
 
-Given the passage below, generate exactly {n} questions that test understanding of the key concepts in the passage. Your questions must stay faithful to the passage — do NOT bring in facts, claims, or examples that are not in the source text. Treat the passage as the authoritative source.
+Given the passage below, generate exactly {n} questions that test understanding of the key concepts in the passage. The passage is the authority on WHAT is true — do NOT bring in facts or claims it does not support. But the questions are yours: rephrase, combine ideas from different parts of the passage, and build scenarios that apply what it teaches, rather than turning its sentences into questions.
 
 ${QUESTION_SHAPE}
-- For "sourcePassage": a direct verbatim quote (≤ 200 characters) from the source passage below that supports the correct answer. Must appear literally in the passage.
+- For "sourcePassage": a direct verbatim quote (≤ 200 characters) from the source passage below that supports the correct answer. Must appear literally in the passage. This is the evidence for the answer — it belongs here, and only here; the question and options must not reuse its wording.
+
+${ITEM_WRITING}
 
 ${TAGGING_BLOCK}
 
@@ -102,10 +168,14 @@ Target level: {level}
 Learning objectives: {objectives}
 Must-include concepts: {mustInclude}
 
-Generate exactly {n} questions that test conceptual understanding at the target level. Prioritize concepts over trivia — prefer questions that require reasoning or application over questions that require memorizing a proper noun or date. If "must-include concepts" are provided, at least one question per concept should appear.
+Generate exactly {n} questions that test conceptual understanding at the target level. If "must-include concepts" are provided, at least one question per concept should appear.
+
+The objectives and must-include fields may contain notes the learner pasted in. Treat them as a map of what to cover, never as text to copy: test the ideas they name with questions written in your own words, at the target level, drawing on standard knowledge of the topic.
 
 ${QUESTION_SHAPE}
 - For "sourcePassage": a short canonical statement or definition (≤ 200 characters) that the correct answer rests on. This is YOUR concise synthesis from general knowledge, not a quote from a document. Think "what a textbook glossary entry would say."
+
+${ITEM_WRITING}
 
 ${TAGGING_BLOCK}
 
@@ -129,7 +199,9 @@ The source material below is a slide deck delimited by "--- Slide N ---" markers
 Given the slide deck below, generate exactly {n} questions that test understanding of the concepts being taught, NOT superficial details like slide numbers, headers, or section titles.
 
 ${QUESTION_SHAPE}
-- For "sourcePassage": the single slide bullet (≤ 200 characters) that most directly supports the correct answer. Quote it verbatim if possible; it's OK to quote a terse fragment.
+- For "sourcePassage": the single slide bullet (≤ 200 characters) that most directly supports the correct answer. Quote it verbatim if possible; it's OK to quote a terse fragment. The question and options must not reuse the bullet's wording.
+
+${ITEM_WRITING}
 
 ${TAGGING_BLOCK}
 
