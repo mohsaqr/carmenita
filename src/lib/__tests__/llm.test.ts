@@ -46,7 +46,7 @@ describe("settingsFromProvider", () => {
 });
 
 describe("buildProviderRequest", () => {
-  const base: LLMSettings = { provider: "anthropic", model: "claude-opus-4-6", apiKey: "k" };
+  const base: LLMSettings = { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k" };
 
   it("builds the Anthropic Messages request with a required max_tokens", () => {
     const req = buildProviderRequest(base, "sys", "hi");
@@ -54,7 +54,7 @@ describe("buildProviderRequest", () => {
     expect(req.headers["x-api-key"]).toBe("k");
     expect(req.headers["anthropic-version"]).toBe("2023-06-01");
     expect(req.body).toEqual({
-      model: "claude-opus-4-6",
+      model: "claude-sonnet-5-5",
       system: "sys",
       messages: [{ role: "user", content: "hi" }],
       max_tokens: 16000,
@@ -165,11 +165,11 @@ describe("listModels", () => {
 describe("replaceRetiredModels", () => {
   it("moves a saved retired Claude id to the current default", () => {
     const out = replaceRetiredModels({ anthropic: config("anthropic", { defaultModel: "claude-3-5-sonnet-20241022" }) });
-    expect(out.anthropic.defaultModel).toBe("claude-opus-4-6");
+    expect(out.anthropic.defaultModel).toBe("claude-sonnet-5-5");
   });
 
   it("leaves a model the user chose untouched", () => {
-    const providers = { anthropic: config("anthropic", { defaultModel: "claude-sonnet-5-5" }) };
+    const providers = { anthropic: config("anthropic", { defaultModel: "claude-haiku-5-5" }) };
     expect(replaceRetiredModels(providers)).toEqual(providers);
   });
 });

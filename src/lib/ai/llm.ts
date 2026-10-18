@@ -51,7 +51,7 @@ export class LLMError extends Error {
  */
 export const PROVIDERS: Record<string, { label: string; baseUrl: string; model: string; local?: boolean }> = {
   openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" },
-  anthropic: { label: "Anthropic", baseUrl: "https://api.anthropic.com/v1", model: "claude-opus-4-6" },
+  anthropic: { label: "Anthropic", baseUrl: "https://api.anthropic.com/v1", model: "claude-sonnet-5-5" },
   google: { label: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash" },
   groq: { label: "Groq", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
   together: { label: "Together AI", baseUrl: "https://api.together.xyz/v1", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },

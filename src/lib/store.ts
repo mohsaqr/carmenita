@@ -42,7 +42,7 @@ const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
     "anthropic",
     "anthropic",
     "Anthropic",
-    "claude-opus-4-6",
+    "claude-sonnet-5-5",
   ),
   google: defaultProvider("google", "google", "Google (Gemini)", "gemini-1.5-pro"),
   groq: defaultProvider("groq", "groq", "Groq", "llama-3.3-70b-versatile"),
@@ -96,8 +96,8 @@ const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
  * user who opened Settings before a retirement stays on a dead id.
  */
 const RETIRED_MODELS: Record<string, string> = {
-  "claude-3-5-sonnet-20241022": "claude-opus-4-6",
-  "claude-3-5-sonnet-20240620": "claude-opus-4-6",
+  "claude-3-5-sonnet-20241022": "claude-sonnet-5-5",
+  "claude-3-5-sonnet-20240620": "claude-sonnet-5-5",
 };
 
 export function replaceRetiredModels(
