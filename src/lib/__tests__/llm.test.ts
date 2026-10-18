@@ -151,6 +151,24 @@ describe("self-correction", () => {
   });
 });
 
+describe("call logging", () => {
+  it("logs one line per call with outcome and time, never the key", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(200, { choices: [{ message: { content: "OK" } }] })));
+    await callLLM({ provider: "openai", model: "gpt", apiKey: "sk-secret", retries: 0 }, "s", "u");
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/^\[llm\] openai gpt \d+ms ok$/));
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(404, { error: { message: "model: nope" } })));
+    await callLLM({ provider: "openai", model: "nope", apiKey: "sk-secret", retries: 0 }, "s", "u").catch(() => {});
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[llm\] openai nope \d+ms failed HTTP 404: model: nope$/));
+    const logged = [...info.mock.calls, ...warn.mock.calls].flat().join(" ");
+    expect(logged).not.toContain("sk-secret");
+    info.mockRestore();
+    warn.mockRestore();
+  });
+});
+
 describe("listModels", () => {
   it("strips Google's models/ prefix and de-duplicates", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json(200, { models: [{ name: "models/b" }, { name: "models/a" }, { name: "models/a" }] })));

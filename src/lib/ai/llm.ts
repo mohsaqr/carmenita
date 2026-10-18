@@ -328,6 +328,22 @@ function finalError(error: unknown): LLMError {
   return new LLMError(prefix + friendlyError(error), status, { cause: error });
 }
 
+/**
+ * One server-log line per finished call — provider, model, outcome, time —
+ * so a failed or slow generation can be diagnosed from the service journal.
+ * Never the key, the prompt or the reply.
+ */
+function logCall(settings: LLMSettings, latencyMs: number, error?: unknown): void {
+  const what = `[llm] ${settings.provider} ${settings.model} ${latencyMs}ms`;
+  if (error === undefined) {
+    console.info(`${what} ok`);
+    return;
+  }
+  const status = (error as { status?: number })?.status;
+  const message = String((error as Error)?.message ?? error).slice(0, 300);
+  console.warn(`${what} failed${status ? ` HTTP ${status}` : ""}: ${message}`);
+}
+
 async function callOnce(settings: LLMSettings, systemPrompt: string, userContent: string, signal: AbortSignal): Promise<string> {
   const request = buildProviderRequest(settings, systemPrompt, userContent);
   const response = await fetch(request.url, { method: "POST", headers: request.headers, body: JSON.stringify(request.body), signal });
@@ -361,7 +377,9 @@ export async function callLLM(
     outerSignal?.addEventListener("abort", abort, { once: true });
     try {
       const output = await callOnce(current, systemPrompt, userContent, controller.signal);
-      return { output, latencyMs: Math.round(performance.now() - started) };
+      const latencyMs = Math.round(performance.now() - started);
+      logCall(current, latencyMs);
+      return { output, latencyMs };
     } catch (error) {
       lastError = error;
       if (!outerSignal?.aborted && adaptations < 3) {
@@ -374,13 +392,17 @@ export async function callLLM(
           continue;
         }
       }
-      if (outerSignal?.aborted || attempt === attempts || !retryable(error)) throw finalError(error);
+      if (outerSignal?.aborted || attempt === attempts || !retryable(error)) {
+        logCall(current, Math.round(performance.now() - started), error);
+        throw finalError(error);
+      }
       await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** (attempt - 1) + Math.random() * 150));
     } finally {
       clearTimeout(timeout);
       outerSignal?.removeEventListener("abort", abort);
     }
   }
+  logCall(current, Math.round(performance.now() - started), lastError);
   throw finalError(lastError);
 }
 
