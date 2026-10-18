@@ -61,7 +61,7 @@ export interface SystemSettings {
 export type GenerationJobState =
   | { status: "idle" }
   | { status: "extracting"; filename: string }
-  | { status: "generating"; filename: string }
+  | { status: "generating"; filename: string; progress?: string }
   | { status: "success"; quizId: string }
   | { status: "error"; message: string };
 

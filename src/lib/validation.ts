@@ -95,6 +95,15 @@ export const GenerateFromTopicSchema = z.object({
   defaultSubject: z.string().max(200).optional(),
   defaultLesson: z.string().max(200).optional(),
   defaultTags: z.array(z.string().max(100)).max(20).optional(),
+  /**
+   * Batched runs (the client splits a large count into requests of at most
+   * TOPIC_BATCH_SIZE so none outlives the tunnel's ~100 s limit):
+   * how many questions THIS request generates (default settings.questionCount),
+   * the quiz an earlier batch created, and that quiz's questions so far.
+   */
+  batchCount: z.number().int().min(1).max(50).optional(),
+  appendToQuizId: z.string().min(1).optional(),
+  avoid: z.array(z.string().max(2000)).max(200).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

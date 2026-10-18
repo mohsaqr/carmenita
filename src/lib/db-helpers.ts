@@ -28,12 +28,22 @@ import type {
  * where the LLM didn't provide its own.
  */
 
-export interface InsertQuizOptions {
-  /** Owner of the new quiz and questions (private bank). */
-  userId: string;
+export interface InsertQuizOptions extends BatchSource {
   title: string;
   settings: QuizSettings;
   provider: ProviderConfig;
+}
+
+export interface InsertQuizResult {
+  quizId: string;
+  questionCount: number;
+  questionIds: string[];
+}
+
+/** Taxonomy and provenance shared by every question of one batch. */
+interface BatchSource {
+  /** Owner of the questions (private bank). */
+  userId: string;
   parsedQuestions: ParsedQuestion[];
   sourceType: QuestionSource;
   sourceDocumentId?: string | null;
@@ -43,18 +53,13 @@ export interface InsertQuizOptions {
   defaultTags?: string[];
 }
 
-export interface InsertQuizResult {
-  quizId: string;
-  questionCount: number;
-  questionIds: string[];
-}
-
-export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResult {
+/**
+ * Bank rows for a batch: tag fallback, lowercase taxonomy, batch defaults
+ * where the LLM gave none. `_idx` is the position within the batch.
+ */
+function buildQuestionRows(batch: BatchSource, now: string) {
   const {
     userId,
-    title,
-    settings,
-    provider,
     parsedQuestions,
     sourceType,
     sourceDocumentId = null,
@@ -62,14 +67,7 @@ export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResul
     defaultSubject,
     defaultLesson,
     defaultTags = [],
-  } = opts;
-
-  if (parsedQuestions.length === 0) {
-    throw new Error("insertQuizAndQuestions: parsedQuestions is empty");
-  }
-
-  const quizId = randomUUID();
-  const now = new Date().toISOString();
+  } = batch;
 
   const normalizedDefaultSubject =
     defaultSubject?.trim().toLowerCase() || null;
@@ -94,7 +92,7 @@ export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResul
     };
   });
 
-  const questionRows = enriched.map((q, idx) => ({
+  return enriched.map((q, idx) => ({
     id: randomUUID(),
     type: q.type,
     question: q.question,
@@ -115,6 +113,18 @@ export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResul
     userId,
     _idx: idx,
   }));
+}
+
+export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResult {
+  const { userId, title, settings, provider, parsedQuestions, sourceDocumentId = null } = opts;
+
+  if (parsedQuestions.length === 0) {
+    throw new Error("insertQuizAndQuestions: parsedQuestions is empty");
+  }
+
+  const quizId = randomUUID();
+  const now = new Date().toISOString();
+  const questionRows = buildQuestionRows(opts, now);
 
   const tx = sqlite.transaction(() => {
     db.insert(quizzes)
@@ -145,6 +155,65 @@ export function insertQuizAndQuestions(opts: InsertQuizOptions): InsertQuizResul
           quizId,
           questionId: q.id,
           idx: q._idx,
+        })),
+      )
+      .run();
+  });
+  tx();
+
+  return {
+    quizId,
+    questionCount: questionRows.length,
+    questionIds: questionRows.map((q) => q.id),
+  };
+}
+
+export interface AppendQuestionsOptions extends BatchSource {
+  quizId: string;
+}
+
+/**
+ * Add a further batch of generated questions to the end of an existing quiz
+ * — how a topic run larger than one batch is assembled, one request per
+ * batch, so no single request outlives the tunnel's response limit.
+ *
+ * Returns null when the quiz is not this user's (or is in the trash): a
+ * foreign id behaves like a missing one.
+ */
+export function appendQuestionsToQuiz(opts: AppendQuestionsOptions): InsertQuizResult | null {
+  const { userId, quizId, parsedQuestions } = opts;
+
+  if (parsedQuestions.length === 0) {
+    throw new Error("appendQuestionsToQuiz: parsedQuestions is empty");
+  }
+
+  const owned = sqlite
+    .prepare("SELECT 1 FROM quizzes WHERE id = ? AND user_id = ? AND deleted_at IS NULL")
+    .get(quizId, userId);
+  if (!owned) return null;
+
+  const questionRows = buildQuestionRows(opts, new Date().toISOString());
+
+  const tx = sqlite.transaction(() => {
+    const { next } = sqlite
+      .prepare("SELECT COALESCE(MAX(idx) + 1, 0) AS next FROM quiz_questions WHERE quiz_id = ?")
+      .get(quizId) as { next: number };
+
+    db.insert(questions)
+      .values(
+        questionRows.map(({ _idx, ...rest }) => {
+          void _idx;
+          return rest;
+        }),
+      )
+      .run();
+
+    db.insert(quizQuestions)
+      .values(
+        questionRows.map((q) => ({
+          quizId,
+          questionId: q.id,
+          idx: next + q._idx,
         })),
       )
       .run();

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GenerateFromTopicSchema } from "@/lib/validation";
 import { generateQuestionsFromTopic } from "@/lib/llm-topic";
-import { insertQuizAndQuestions } from "@/lib/db-helpers";
+import { appendQuestionsToQuiz, insertQuizAndQuestions } from "@/lib/db-helpers";
 import { resolvePrompt } from "@/lib/settings-store";
 import { requireUser } from "@/lib/auth";
 
@@ -14,9 +14,15 @@ import { requireUser } from "@/lib/auth";
  * Body: {
  *   topic, title, subject?, level?, objectives?, mustInclude?,
  *   settings, provider, temperature?, systemPromptOverride?,
- *   defaultSubject?, defaultLesson?, defaultTags?
+ *   defaultSubject?, defaultLesson?, defaultTags?,
+ *   batchCount?, appendToQuizId?, avoid?
  * }
- * Returns: { quizId, questionCount }
+ * Returns: { quizId, questionCount, questions } — `questions` is this
+ * batch's question texts, which the client passes back as `avoid`.
+ *
+ * Large runs are split by the client into batches (see TOPIC_BATCH_SIZE):
+ * the first request creates the quiz, each later one sends
+ * `appendToQuizId` and adds its questions to the end.
  *
  * Flow:
  *   1. Validate body
@@ -63,6 +69,9 @@ export async function POST(req: NextRequest) {
     defaultSubject,
     defaultLesson,
     defaultTags,
+    batchCount,
+    appendToQuizId,
+    avoid,
   } = parsed.data;
 
   let parsedQuestions;
@@ -73,7 +82,7 @@ export async function POST(req: NextRequest) {
       level,
       objectives,
       mustInclude,
-      count: settings.questionCount,
+      count: batchCount ?? settings.questionCount,
       allowedTypes: settings.allowedTypes,
       difficultyMix: settings.difficultyMix,
       provider,
@@ -81,6 +90,7 @@ export async function POST(req: NextRequest) {
       systemPromptOverride:
         systemPromptOverride ??
         resolvePrompt(userId, "carmenita.mcq.topic"),
+      avoid,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown generation error";
@@ -95,13 +105,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { quizId, questionCount } = insertQuizAndQuestions({
+  const batch = {
     userId,
-    title,
-    settings,
-    provider,
     parsedQuestions,
-    sourceType: "manual", // topic mode has no document source
+    sourceType: "manual" as const, // topic mode has no document source
     sourceDocumentId: null,
     sourceLabel: `topic: ${topic}`.slice(0, 200),
     // If the user didn't set explicit defaults, fall back to the topic
@@ -110,7 +117,18 @@ export async function POST(req: NextRequest) {
     defaultSubject: defaultSubject ?? subject,
     defaultLesson,
     defaultTags,
-  });
+  };
 
-  return NextResponse.json({ quizId, questionCount });
+  const result = appendToQuizId
+    ? appendQuestionsToQuiz({ ...batch, quizId: appendToQuizId })
+    : insertQuizAndQuestions({ ...batch, title, settings, provider });
+  if (!result) {
+    return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    quizId: result.quizId,
+    questionCount: result.questionCount,
+    questions: parsedQuestions.map((q) => q.question),
+  });
 }

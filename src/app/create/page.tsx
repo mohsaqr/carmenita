@@ -40,6 +40,7 @@ import { useActiveProvider } from "@/hooks/useActiveProvider";
 import { NoProviderWarning } from "@/components/NoProviderWarning";
 import { useAppStore } from "@/lib/store";
 import type { QuestionType, GenerationJobState } from "@/types";
+import { batchSizes } from "@/lib/topic-batches";
 
 /**
  * Unified creation hub. Four paths to getting questions into the bank:
@@ -266,30 +267,65 @@ function CreatePageInner() {
       toast.error("Select at least one question type");
       return;
     }
-    setJob({ status: "generating", filename: `topic: ${topicName}` });
-    try {
-      const res = await fetch("/api/generate-from-topic", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic: topicName,
-          subject: topicSubject.trim() || undefined,
-          level: topicLevel,
-          objectives: topicObjectives.trim() || undefined,
-          mustInclude: topicMustInclude.trim() || undefined,
-          ...commonGenerateBody(),
-        }),
+    const sizes = batchSizes(questionCount);
+    const label = `topic: ${topicName}`;
+    const base = {
+      topic: topicName,
+      subject: topicSubject.trim() || undefined,
+      level: topicLevel,
+      objectives: topicObjectives.trim() || undefined,
+      mustInclude: topicMustInclude.trim() || undefined,
+      ...commonGenerateBody(),
+    };
+
+    // One request per batch, so no single request outlives the tunnel's
+    // ~100 s limit. The first creates the quiz; the rest append to it and
+    // list what was already asked so batches don't repeat each other.
+    let quizId: string | null = null;
+    let made = 0;
+    const asked: string[] = [];
+    // Sequential on purpose: each batch needs the quiz id and the
+    // questions of the batches before it.
+    for (const [i, batchCount] of sizes.entries()) {
+      setJob({
+        status: "generating",
+        filename: label,
+        progress: sizes.length > 1 ? `batch ${i + 1} of ${sizes.length} (${made} of ${questionCount} done)` : undefined,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Generation failed (${res.status})`);
-      setJob({ status: "success", quizId: data.quizId });
-      toast.success(`Generated ${data.questionCount} questions`);
-      router.push(`/quiz?id=${data.quizId}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      setJob({ status: "error", message: msg });
-      toast.error(msg);
+      try {
+        const res = await fetch("/api/generate-from-topic", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...base,
+            batchCount,
+            ...(quizId ? { appendToQuizId: quizId, avoid: asked } : {}),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Generation failed (${res.status})`);
+        quizId = data.quizId as string;
+        made += data.questionCount as number;
+        asked.push(...((data.questions as string[] | undefined) ?? []));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        if (quizId) {
+          // Earlier batches are saved — keep them rather than throw them away.
+          toast.error(`Stopped after ${made} of ${questionCount} questions: ${msg}`);
+          setJob({ status: "success", quizId });
+          router.push(`/quiz?id=${quizId}`);
+        } else {
+          setJob({ status: "error", message: msg });
+          toast.error(msg);
+        }
+        return;
+      }
     }
+
+    if (!quizId) return;
+    setJob({ status: "success", quizId });
+    toast.success(`Generated ${made} questions`);
+    router.push(`/quiz?id=${quizId}`);
   }
 
   return (
@@ -590,7 +626,8 @@ function CreatePageInner() {
           {job.status === "generating" && (
             <div className="flex-1 space-y-1">
               <p className="text-sm text-muted-foreground">
-                Generating questions — this can take 10–60 seconds depending on the model.
+                Generating questions — this can take 10–60 seconds depending on the model
+                {job.progress ? ` · ${job.progress}` : ""}.
               </p>
               <Progress value={undefined} />
             </div>

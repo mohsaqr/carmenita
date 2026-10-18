@@ -32,7 +32,17 @@ export interface TopicGenerationArgs {
   provider: ProviderConfig;
   temperature?: number;
   systemPromptOverride?: string;
+  /**
+   * Questions already generated for this quiz by earlier batches. The
+   * prompt lists them so a later batch covers new ground instead of
+   * re-asking the same things.
+   */
+  avoid?: string[];
 }
+
+/** Cap on how much of the earlier batches the prompt repeats back. */
+const AVOID_MAX_ITEMS = 60;
+const AVOID_MAX_CHARS = 160;
 
 /**
  * Pure prompt builder — exposed for unit tests that assert the rendered
@@ -52,6 +62,7 @@ export function buildTopicPrompt(
     allowedTypes,
     difficultyMix,
     systemPromptOverride,
+    avoid = [],
   } = args;
 
   const template = systemPromptOverride ?? getPrompt("carmenita.mcq.topic");
@@ -59,7 +70,7 @@ export function buildTopicPrompt(
     difficultyMix ?? { easy: 0.3, medium: 0.5, hard: 0.2 },
   );
 
-  return renderPrompt(template, {
+  const prompt = renderPrompt(template, {
     n: String(count),
     topic: topic.trim(),
     subject: subject?.trim() || "(unspecified)",
@@ -69,6 +80,16 @@ export function buildTopicPrompt(
     allowedTypes: allowedTypes.join(", "),
     difficultyMix: difficultyMixJson,
   });
+
+  const asked = avoid
+    .map((q) => q.replace(/\s+/g, " ").trim().slice(0, AVOID_MAX_CHARS))
+    .filter(Boolean)
+    .slice(-AVOID_MAX_ITEMS);
+  if (asked.length === 0) return prompt;
+  return `${prompt}
+
+ALREADY ASKED (earlier batches of this same quiz): do not repeat, paraphrase or test the exact same fact as any of these — cover other aspects of the topic.
+${asked.map((q) => `- ${q}`).join("\n")}`;
 }
 
 export async function generateQuestionsFromTopic(
