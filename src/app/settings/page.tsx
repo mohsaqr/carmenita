@@ -144,50 +144,64 @@ function ProviderRow({
   const [availableModels, setAvailableModels] = useState<string[] | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
 
-  // Local/custom providers don't have well-known model ids — the user's
-  // actual list depends on what they've downloaded. We let them probe
-  // the provider's /models endpoint to populate a real dropdown.
-  const canProbeModels =
-    provider.providerType === "ollama" ||
-    provider.providerType === "lmstudio" ||
-    provider.providerType === "custom";
+  const [testing, setTesting] = useState(false);
+  const temperature = useAppStore((state) => state.systemSettings.temperature);
+
+  // Every provider but Azure lists its models over the API (Azure names
+  // deployments in its portal). The list is a suggestion: the model field
+  // stays free text, since a provider's /models is often incomplete.
+  const canProbeModels = provider.providerType !== "azure";
 
   async function loadModels() {
-    if (!provider.baseUrl) {
-      toast.error("Set a base URL first");
-      return;
-    }
     setLoadingModels(true);
     try {
-      const res = await fetch("/api/local-models", {
+      const res = await fetch("/api/llm/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          baseUrl: provider.baseUrl,
-          apiKey: provider.apiKey || undefined,
-        }),
+        body: JSON.stringify({ provider }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { models?: string[]; error?: string };
       if (data.error) {
         toast.error(data.error);
         setAvailableModels([]);
         return;
       }
-      if (!Array.isArray(data.models) || data.models.length === 0) {
-        toast.error("The endpoint responded but had no models");
+      const models = data.models ?? [];
+      if (models.length === 0) {
+        toast.error("The provider responded but listed no models");
         setAvailableModels([]);
         return;
       }
-      setAvailableModels(data.models);
-      toast.success(`Found ${data.models.length} model${data.models.length === 1 ? "" : "s"}`);
-      // If the current defaultModel isn't in the list, auto-select the first one
-      if (!provider.defaultModel || !data.models.includes(provider.defaultModel)) {
-        onChange({ defaultModel: data.models[0] });
-      }
+      setAvailableModels(models);
+      toast.success(`Found ${models.length} model${models.length === 1 ? "" : "s"}`);
+      if (!provider.defaultModel) onChange({ defaultModel: models[0] });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Probe failed");
+      toast.error(err instanceof Error ? err.message : "Could not load models");
     } finally {
       setLoadingModels(false);
+    }
+  }
+
+  // One real request down the path quiz generation uses — proves the key,
+  // the model id and the parameters together, not just that a key exists.
+  async function testProvider() {
+    setTesting(true);
+    try {
+      const res = await fetch("/api/llm/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, temperature: temperature ?? undefined }),
+      });
+      const data = (await res.json()) as { ok?: boolean; latencyMs?: number; error?: string };
+      if (data.ok) {
+        toast.success(`${provider.displayName} answered in ${((data.latencyMs ?? 0) / 1000).toFixed(1)} s`);
+      } else {
+        toast.error(data.error ?? "The model answered with no text");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Test failed");
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -252,7 +266,7 @@ function ProviderRow({
                     variant="ghost"
                     size="xs"
                     onClick={loadModels}
-                    disabled={loadingModels || !provider.baseUrl}
+                    disabled={loadingModels}
                   >
                     {loadingModels ? "Loading…" : "Load models"}
                   </Button>
@@ -301,9 +315,16 @@ function ProviderRow({
               placeholder={
                 provider.providerType === "custom"
                   ? "https://your-endpoint/v1"
-                  : "(defaults to provider URL)"
+                  : provider.providerType === "azure"
+                    ? "resource name, or https://<resource>.openai.azure.com"
+                    : "(defaults to provider URL)"
               }
             />
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" size="sm" onClick={testProvider} disabled={testing}>
+              {testing ? "Testing…" : "Test connection"}
+            </Button>
           </div>
         </div>
       )}

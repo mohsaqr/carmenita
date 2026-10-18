@@ -1,7 +1,5 @@
-import { generateText } from "ai";
 import { z } from "zod";
-import { getModel } from "@/lib/ai/providers";
-import { withRetry } from "@/lib/retry";
+import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
 import { getPrompt, renderPrompt } from "@/lib/prompts";
 import type { ProviderConfig, Question } from "@/types";
 
@@ -66,24 +64,13 @@ export async function generateExplanation(
   template?: string,
 ): Promise<string> {
   assertProvider(provider);
-  const model = getModel(
-    provider.providerType,
-    provider.defaultModel,
-    provider.apiKey,
-    provider.baseUrl,
-  );
 
   const systemPrompt = buildExplanationPrompt(question, template);
 
-  const { text: raw } = await withRetry(
-    () =>
-      generateText({
-        model,
-        system: systemPrompt,
-        prompt: 'Return the JSON object now, e.g. {"explanation": "..."}.',
-        ...(temperature !== undefined ? { temperature } : {}),
-      }),
-    { maxAttempts: 3 },
+  const { output: raw } = await callLLM(
+    settingsFromProvider(provider, { temperature }),
+    systemPrompt,
+    'Return the JSON object now, e.g. {"explanation": "..."}.',
   );
 
   const obj = parseJsonObject(raw);
@@ -151,24 +138,13 @@ export async function generateTagging(
   template?: string,
 ): Promise<GeneratedTagging> {
   assertProvider(provider);
-  const model = getModel(
-    provider.providerType,
-    provider.defaultModel,
-    provider.apiKey,
-    provider.baseUrl,
-  );
 
   const systemPrompt = buildTaggingPrompt(question, template);
 
-  const { text: raw } = await withRetry(
-    () =>
-      generateText({
-        model,
-        system: systemPrompt,
-        prompt: "Return the JSON object now.",
-        ...(temperature !== undefined ? { temperature } : {}),
-      }),
-    { maxAttempts: 3 },
+  const { output: raw } = await callLLM(
+    settingsFromProvider(provider, { temperature }),
+    systemPrompt,
+    "Return the JSON object now.",
   );
 
   const obj = parseJsonObject(raw);

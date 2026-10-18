@@ -1,6 +1,4 @@
-import { generateText } from "ai";
-import { getModel } from "@/lib/ai/providers";
-import { withRetry } from "@/lib/retry";
+import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
 import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
 import type { ProviderConfig, Question, VariationType } from "@/types";
 
@@ -239,24 +237,13 @@ export async function generateVariations(
     );
   }
 
-  const model = getModel(
-    provider.providerType,
-    provider.defaultModel,
-    provider.apiKey,
-    provider.baseUrl,
-  );
 
   const systemPrompt = buildVariationPrompt(variationType, original, count);
 
-  const { text: raw } = await withRetry(
-    () =>
-      generateText({
-        model,
-        system: systemPrompt,
-        prompt: "Generate the variations now as a JSON array.",
-        ...(temperature !== undefined ? { temperature } : {}),
-      }),
-    { maxAttempts: 3 },
+  const { output: raw } = await callLLM(
+    settingsFromProvider(provider, { temperature }),
+    systemPrompt,
+    "Generate the variations now as a JSON array.",
   );
 
   return parseQuestionArray(raw);

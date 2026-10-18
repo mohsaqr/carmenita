@@ -42,7 +42,7 @@ const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
     "anthropic",
     "anthropic",
     "Anthropic",
-    "claude-3-5-sonnet-20241022",
+    "claude-opus-5-5",
   ),
   google: defaultProvider("google", "google", "Google (Gemini)", "gemini-1.5-pro"),
   groq: defaultProvider("groq", "groq", "Groq", "llama-3.3-70b-versatile"),
@@ -90,6 +90,27 @@ const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
   }),
 };
 
+/**
+ * Model ids the provider has retired, mapped to their replacement. Saved
+ * configs keep whatever model they were seeded with, so without this a
+ * user who opened Settings before a retirement stays on a dead id.
+ */
+const RETIRED_MODELS: Record<string, string> = {
+  "claude-3-5-sonnet-20241022": "claude-opus-5-5",
+  "claude-3-5-sonnet-20240620": "claude-opus-5-5",
+};
+
+export function replaceRetiredModels(
+  providers: Record<string, ProviderConfig>,
+): Record<string, ProviderConfig> {
+  return Object.fromEntries(
+    Object.entries(providers).map(([id, p]) => {
+      const replacement = RETIRED_MODELS[p.defaultModel];
+      return [id, replacement ? { ...p, defaultModel: replacement } : p];
+    }),
+  );
+}
+
 interface AppState {
   providers: Record<string, ProviderConfig>;
   activeProviderId: string | null;
@@ -125,10 +146,10 @@ export const useAppStore = create<AppState>()(
         const saved = persisted as Partial<AppState>;
         return {
           ...current,
-          providers: {
+          providers: replaceRetiredModels({
             ...DEFAULT_PROVIDERS,
             ...(saved?.providers ?? {}),
-          },
+          }),
           activeProviderId: saved?.activeProviderId ?? null,
           systemSettings: {
             ...DEFAULT_SYSTEM_SETTINGS,

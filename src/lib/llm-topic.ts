@@ -1,6 +1,4 @@
-import { generateText } from "ai";
-import { getModel } from "@/lib/ai/providers";
-import { withRetry } from "@/lib/retry";
+import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
 import { getPrompt, renderPrompt } from "@/lib/prompts";
 import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
 import type { ProviderConfig, QuestionType, Difficulty } from "@/types";
@@ -92,24 +90,13 @@ export async function generateQuestionsFromTopic(
     throw new Error("Topic is required for topic-based generation.");
   }
 
-  const model = getModel(
-    provider.providerType,
-    provider.defaultModel,
-    provider.apiKey,
-    provider.baseUrl,
-  );
 
   const systemPrompt = buildTopicPrompt(args);
 
-  const { text: raw } = await withRetry(
-    () =>
-      generateText({
-        model,
-        system: systemPrompt,
-        prompt: "Generate the questions now as a JSON array.",
-        ...(temperature !== undefined ? { temperature } : {}),
-      }),
-    { maxAttempts: 3 },
+  const { output: raw } = await callLLM(
+    settingsFromProvider(provider, { temperature }),
+    systemPrompt,
+    "Generate the questions now as a JSON array.",
   );
 
   const parsed = parseQuestionArray(raw);

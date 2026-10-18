@@ -16,13 +16,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.46",
-    "@ai-sdk/azure": "^3.0.31",
-    "@ai-sdk/google": "^3.0.30",
-    "@ai-sdk/groq": "^3.0.24",
-    "@ai-sdk/openai": "^3.0.30",
     "@types/sql.js": "^1.4.11",
-    "ai": "^6.0.97",
     "better-sqlite3": "^11.7.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

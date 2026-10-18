@@ -1,6 +1,4 @@
-import { generateText } from "ai";
-import { getModel } from "@/lib/ai/providers";
-import { withRetry } from "@/lib/retry";
+import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
 import { getPrompt, renderPrompt } from "@/lib/prompts";
 import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
 import { chunkText, distributeQuestions } from "@/lib/chunk";
@@ -56,12 +54,6 @@ export async function generateQuizQuestions(
     );
   }
 
-  const model = getModel(
-    provider.providerType,
-    provider.defaultModel,
-    provider.apiKey,
-    provider.baseUrl,
-  );
 
   const template = systemPromptOverride ?? getPrompt(promptId);
   const difficultyMixJson = JSON.stringify(
@@ -90,15 +82,10 @@ export async function generateQuizQuestions(
     });
 
     try {
-      const { text: raw } = await withRetry(
-        () =>
-          generateText({
-            model,
-            system: systemPrompt,
-            prompt: "Generate the questions now as a JSON array.",
-            ...(temperature !== undefined ? { temperature } : {}),
-          }),
-        { maxAttempts: 3 },
+      const { output: raw } = await callLLM(
+        settingsFromProvider(provider, { temperature }),
+        systemPrompt,
+        "Generate the questions now as a JSON array.",
       );
       const parsed = parseQuestionArray(raw);
       results.push(...parsed);
