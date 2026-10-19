@@ -159,7 +159,7 @@ function CreatePageInner() {
   const [topicSubject, setTopicSubject] = useState("");
   const [topicLevel, setTopicLevel] = useState("undergrad");
   const [topicObjectives, setTopicObjectives] = useState("");
-  const [topicMustInclude, setTopicMustInclude] = useState("");
+  const [topicInstructions, setTopicInstructions] = useState("");
 
   // ── Job state ─────────────────────────────────────────────────────────
   const [job, setJob] = useState<GenerationJobState>({ status: "idle" });
@@ -302,7 +302,7 @@ function CreatePageInner() {
       subject: topicSubject.trim() || undefined,
       level: topicLevel,
       objectives: topicObjectives.trim() || undefined,
-      mustInclude: topicMustInclude.trim() || undefined,
+      customInstructions: topicInstructions.trim() || undefined,
       ...commonGenerateBody(),
     };
 
@@ -477,16 +477,19 @@ function CreatePageInner() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="topic-must-include">
-                  Must-include concepts (optional)
+                <Label htmlFor="topic-instructions">
+                  Custom instructions (optional)
                 </Label>
                 <Textarea
-                  id="topic-must-include"
-                  value={topicMustInclude}
-                  onChange={(e) => setTopicMustInclude(e.target.value)}
-                  rows={2}
-                  placeholder="Comma or newline separated, e.g. electron transport chain, NADH, ATP synthase"
+                  id="topic-instructions"
+                  value={topicInstructions}
+                  onChange={(e) => setTopicInstructions(e.target.value)}
+                  rows={3}
+                  placeholder="Anything the questions must do, e.g. use clinical case vignettes; cover the electron transport chain and ATP synthase; avoid memorising enzyme names"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Followed in every question, ahead of the defaults.
+                </p>
               </div>
             </CardContent>
           </Card>

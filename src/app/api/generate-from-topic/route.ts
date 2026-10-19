@@ -12,7 +12,7 @@ import { requireUser } from "@/lib/auth";
  * "Topic" tab on the /create page.
  *
  * Body: {
- *   topic, title, subject?, level?, objectives?, mustInclude?,
+ *   topic, title, subject?, level?, objectives?, customInstructions?,
  *   settings, provider, temperature?, systemPromptOverride?,
  *   defaultSubject?, defaultLesson?, defaultTags?,
  *   batchCount?, appendToQuizId?, avoid?
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
     subject,
     level,
     objectives,
-    mustInclude,
+    customInstructions,
     settings,
     provider,
     temperature,
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
       subject,
       level,
       objectives,
-      mustInclude,
+      customInstructions,
       count: batchCount ?? settings.questionCount,
       allowedTypes: settings.allowedTypes,
       purpose: settings.purpose,

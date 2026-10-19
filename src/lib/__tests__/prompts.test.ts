@@ -103,12 +103,13 @@ describe("carmenita.mcq.document", () => {
 describe("carmenita.mcq.topic", () => {
   const prompt = PROMPTS["carmenita.mcq.topic"].defaultValue;
 
-  it("has {topic}, {subject}, {level}, {objectives}, {mustInclude} placeholders", () => {
+  it("has {topic}, {subject}, {level}, {objectives} placeholders", () => {
     expect(prompt).toContain("{topic}");
     expect(prompt).toContain("{subject}");
     expect(prompt).toContain("{level}");
     expect(prompt).toContain("{objectives}");
-    expect(prompt).toContain("{mustInclude}");
+    // custom instructions are appended by buildTopicPrompt, not templated
+    expect(prompt).not.toContain("{mustInclude}");
   });
 
   it("does NOT have a {text} placeholder (topic mode has no source passage)", () => {

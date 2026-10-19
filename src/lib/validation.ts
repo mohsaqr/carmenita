@@ -89,7 +89,7 @@ export const GenerateFromTopicSchema = z.object({
   subject: z.string().max(200).optional(),
   level: z.string().max(100).optional(),
   objectives: z.string().max(5000).optional(),
-  mustInclude: z.string().max(5000).optional(),
+  customInstructions: z.string().max(5000).optional(),
   settings: QuizSettingsSchema,
   provider: ProviderConfigSchema,
   temperature: z.number().min(0).max(2).optional(),

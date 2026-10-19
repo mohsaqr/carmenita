@@ -14,8 +14,14 @@ import type { ProviderConfig, QuestionType, Difficulty } from "@/types";
  * topic count is bounded by the UI to ≤ 50 per request (settings.questionCount).
  *
  * Prompt id: `carmenita.mcq.topic`. Placeholders:
- *   {n}, {topic}, {subject}, {level}, {objectives}, {mustInclude},
+ *   {n}, {topic}, {subject}, {level}, {objectives},
  *   {allowedTypes}, {difficultyMix}
+ *   ({mustInclude} is still filled, with the custom instructions, for
+ *   prompts users edited before it was replaced.)
+ *
+ *   The learner's custom instructions are not a template field: the
+ *   builder appends them LAST, as an overriding block, so they hold
+ *   with a user-edited template too.
  *
  * The prompt is told there is NO source passage — it should draw on
  * its training knowledge and produce `sourcePassage` values that are
@@ -27,7 +33,8 @@ export interface TopicGenerationArgs {
   subject?: string;
   level?: string;
   objectives?: string;
-  mustInclude?: string;
+  /** Free-text instructions from the learner; they take priority over the defaults. */
+  customInstructions?: string;
   count: number;
   allowedTypes: QuestionType[];
   difficultyMix?: Partial<Record<Difficulty, number>>;
@@ -61,7 +68,7 @@ export function buildTopicPrompt(
     subject,
     level,
     objectives,
-    mustInclude,
+    customInstructions,
     count,
     allowedTypes,
     difficultyMix,
@@ -82,7 +89,7 @@ export function buildTopicPrompt(
     subject: subject?.trim() || "(unspecified)",
     level: level?.trim() || "undergraduate",
     objectives: objectives?.trim() || "(none specified)",
-    mustInclude: mustInclude?.trim() || "(none specified)",
+    mustInclude: customInstructions?.trim() || "(none specified)",
     allowedTypes: effectiveAllowedTypes(purpose, allowedTypes).join(", "),
     difficultyMix: difficultyMixJson,
   });
@@ -92,22 +99,41 @@ export function buildTopicPrompt(
     .map((q) => q.replace(/\s+/g, " ").trim().slice(0, AVOID_MAX_CHARS))
     .filter(Boolean)
     .slice(-AVOID_MAX_ITEMS);
-  if (asked.length === 0) return withPurpose;
-  return `${withPurpose}
+  const withAvoid = asked.length === 0 ? withPurpose : `${withPurpose}
 
 ALREADY ASKED (earlier batches of this same quiz): do not repeat, paraphrase or test the exact same fact as any of these — cover other aspects of the topic.
 ${asked.map((q) => `- ${q}`).join("\n")}`;
+  const instructions = customInstructions?.trim();
+  if (!instructions) return withAvoid;
+  // Last on purpose: what comes last is what the model weighs most.
+  return `${withAvoid}
+
+${customInstructionsBlock(instructions)}`;
+}
+
+/**
+ * The learner's custom instructions as the prompt's final, overriding
+ * block. They win over the defaults above (focus, coverage, level, style,
+ * wording); the JSON output shape and the allowed question types stay
+ * fixed, since the app reads and checks those.
+ */
+export function customInstructionsBlock(instructions: string): string {
+  return `CUSTOM INSTRUCTIONS FROM THE LEARNER — HIGHEST PRIORITY
+Follow every one of these in every question of this batch. Where they conflict with anything above (focus, coverage, level, style, wording), these instructions win. Only the output format, the JSON fields and the allowed question types stay as specified above. They tell you what to do, not text to copy: never paste their wording into a question.
+"""
+${instructions}
+"""`;
 }
 
 /**
  * One batch of topic questions, through the quality gate: questions that
- * copy the pasted objectives / must-include notes, or repeat an earlier
+ * copy the pasted objectives / custom instructions, or repeat an earlier
  * batch (`avoid`), are dropped and counted in `dropped`.
  */
 export async function generateQuestionsFromTopic(
   args: TopicGenerationArgs,
 ): Promise<ReviewedBatch> {
-  const { topic, count, provider, temperature, objectives, mustInclude, avoid, purpose, allowedTypes } = args;
+  const { topic, count, provider, temperature, objectives, customInstructions, avoid, purpose, allowedTypes } = args;
 
   if (
     !provider.apiKey &&
@@ -132,7 +158,7 @@ export async function generateQuestionsFromTopic(
   );
 
   const reviewed = reviewGenerated(parseQuestionArray(raw), {
-    sources: [objectives ?? "", mustInclude ?? ""],
+    sources: [objectives ?? "", customInstructions ?? ""],
     avoid,
     allowedTypes: effectiveAllowedTypes(purpose, allowedTypes),
   });

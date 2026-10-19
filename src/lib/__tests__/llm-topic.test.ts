@@ -56,12 +56,33 @@ describe("buildTopicPrompt", () => {
     expect(p).toContain("Distinguish substrate-level");
   });
 
-  it("embeds must-include concepts when provided", () => {
+  it("appends custom instructions last, as the overriding block", () => {
     const p = buildTopicPrompt({
       ...baseArgs,
-      mustInclude: "electron transport chain, NADH, ATP synthase",
+      customInstructions: "Use clinical case vignettes; cover ATP synthase",
+      avoid: ["What is NADH?"],
     });
-    expect(p).toContain("electron transport chain");
+    const block = p.indexOf("CUSTOM INSTRUCTIONS FROM THE LEARNER — HIGHEST PRIORITY");
+    expect(block).toBeGreaterThan(-1);
+    // after the purpose block and the already-asked list
+    expect(block).toBeGreaterThan(p.indexOf("ALREADY ASKED"));
+    expect(p.trimEnd().endsWith('Use clinical case vignettes; cover ATP synthase\n"""')).toBe(true);
+    expect(p).toMatch(/these instructions win/);
+  });
+
+  it("adds no instructions block when none are given", () => {
+    expect(buildTopicPrompt(baseArgs)).not.toContain("CUSTOM INSTRUCTIONS");
+    expect(buildTopicPrompt({ ...baseArgs, customInstructions: "   " })).not.toContain("CUSTOM INSTRUCTIONS");
+  });
+
+  it("keeps custom instructions with a user-edited template, and fills its old {mustInclude}", () => {
+    const p = buildTopicPrompt({
+      ...baseArgs,
+      systemPromptOverride: "OLD: {topic} / {mustInclude}",
+      customInstructions: "Only ask about the Krebs cycle",
+    });
+    expect(p.startsWith("OLD: mitochondrial respiration / Only ask about the Krebs cycle")).toBe(true);
+    expect(p).toContain("CUSTOM INSTRUCTIONS FROM THE LEARNER");
   });
 
   it("embeds the allowed question types as a CSV", () => {
@@ -113,7 +134,7 @@ describe("buildTopicPrompt", () => {
       subject: "cell biology",
       level: "undergrad",
       objectives: "understand atp production",
-      mustInclude: "electron transport chain",
+      customInstructions: "electron transport chain",
     });
     // No {topic} / {subject} / etc. should remain
     expect(p).not.toMatch(/\{topic\}/);

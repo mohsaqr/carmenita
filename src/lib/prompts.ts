@@ -166,11 +166,10 @@ Topic: {topic}
 Subject area: {subject}
 Target level: {level}
 Learning objectives: {objectives}
-Must-include concepts: {mustInclude}
 
-Generate exactly {n} questions that test conceptual understanding at the target level. If "must-include concepts" are provided, at least one question per concept should appear.
+Generate exactly {n} questions that test conceptual understanding at the target level.
 
-The objectives and must-include fields may contain notes the learner pasted in. Treat them as a map of what to cover, never as text to copy: test the ideas they name with questions written in your own words, at the target level, drawing on standard knowledge of the topic.
+The objectives field may contain notes the learner pasted in. Treat them as a map of what to cover, never as text to copy: test the ideas they name with questions written in your own words, at the target level, drawing on standard knowledge of the topic.
 
 ${QUESTION_SHAPE}
 - For "sourcePassage": a short canonical statement or definition (≤ 200 characters) that the correct answer rests on. This is YOUR concise synthesis from general knowledge, not a quote from a document. Think "what a textbook glossary entry would say."
@@ -287,7 +286,7 @@ export const PROMPTS: Record<string, PromptDef> = {
     id: "carmenita.mcq.topic",
     name: "Topic → MCQ",
     description:
-      "Generates MCQs from a typed topic with optional structured context (subject, level, objectives, must-include concepts). No source document — uses the LLM's training knowledge.",
+      "Generates MCQs from a typed topic with optional structured context (subject, level, objectives) and the learner's custom instructions, which the builder appends last. No source document — uses the LLM's training knowledge.",
     defaultValue: MCQ_TOPIC_DEFAULT,
   },
   "carmenita.mcq.lecture": {
