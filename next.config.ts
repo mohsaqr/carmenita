@@ -61,6 +61,16 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "*": ["./carmenita.db*", "./public/carmenita.db", "./out/**", "./seed/**"],
   },
+  // pdfjs imports its worker at runtime by a computed path, so the file
+  // tracer never sees it and .next/standalone shipped without it: every
+  // PDF upload on the live server failed with "Setting up fake worker
+  // failed: Cannot find module …/pdf.worker.mjs" (2026-10-20).
+  outputFileTracingIncludes: {
+    "/api/documents": [
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+      "./node_modules/pdfjs-dist/standard_fonts/**",
+    ],
+  },
 };
 
 export default nextConfig;
