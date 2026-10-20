@@ -41,6 +41,7 @@ import { NoProviderWarning } from "@/components/NoProviderWarning";
 import { useAppStore } from "@/lib/store";
 import type { QuestionType, GenerationJobState } from "@/types";
 import { batchSizes } from "@/lib/topic-batches";
+import { pollGenerationJob, readJson } from "@/lib/generation-poll";
 import { addDrops, dropsMessage, NO_DROPS, type QualityDrops } from "@/lib/question-quality";
 import {
   DEFAULT_PURPOSE,
@@ -269,8 +270,18 @@ function CreatePageInner() {
           ...commonGenerateBody(),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Generation failed (${res.status})`);
+      const started = await readJson(res);
+      if (!res.ok) throw new Error(String(started.error ?? `Generation failed (${res.status})`));
+      // Generation runs as a server job (it can outlast the tunnel's
+      // ~100 s request limit); poll it until the quiz is saved.
+      const data = await pollGenerationJob(String(started.jobId), {
+        onProgress: (done, total) =>
+          setJob({
+            status: "generating",
+            filename: docInfo.filename,
+            progress: total > 1 ? `${done} of ${total} parts done` : undefined,
+          }),
+      });
       setJob({ status: "success", quizId: data.quizId });
       toast.success(`Generated ${data.questionCount} questions`, {
         description: dropsMessage((data.dropped as QualityDrops | undefined) ?? NO_DROPS) || undefined,
@@ -703,7 +714,7 @@ function CreatePageInner() {
           {job.status === "generating" && (
             <div className="flex-1 space-y-1">
               <p className="text-sm text-muted-foreground">
-                Generating questions — this can take 10–60 seconds depending on the model
+                Generating questions — this can take a minute or two depending on the model
                 {job.progress ? ` · ${job.progress}` : ""}.
               </p>
               <Progress value={undefined} />

@@ -8,21 +8,27 @@ import { insertQuizAndQuestions } from "@/lib/db-helpers";
 import { isLectureFilename } from "@/lib/doc-extract";
 import { resolvePrompt } from "@/lib/settings-store";
 import { requireUser } from "@/lib/auth";
+import { chunkText } from "@/lib/chunk";
+import { startJob } from "@/lib/generation-jobs";
 
 /**
  * POST /api/generate-quiz
  *
  * Body: { documentId, title, settings, provider, temperature?, systemPromptOverride?, defaultSubject?, defaultLesson?, defaultTags? }
- * Returns: { quizId, questionCount }
+ * Returns 202 { jobId } — poll `GET /api/generate-quiz/jobs/[jobId]` for
+ * progress and, when done, { quizId, questionCount, dropped }.
+ *
+ * Generation runs as a background job (generation-jobs.ts) because it can
+ * outlast the ~100 s the Cloudflare tunnel allows one request.
  *
  * Flow:
  *   1. Validate body
- *   2. Load document row
+ *   2. Load document row (a bad body or missing document still answers 4xx
+ *      straight away)
  *   3. Detect .pptx filenames → switch `promptId` to `carmenita.mcq.lecture`
  *      (slide-aware prompt). Other filenames use `carmenita.mcq.document`.
- *   4. Call generateQuizQuestions (chunking + retry)
- *   5. Persist via the shared helper (handles auto-tag fallback + transaction)
- *   6. Return the new quizId
+ *   4. In the job: generateQuizQuestions (chunks in parallel), then persist
+ *      via the shared helper (handles auto-tag fallback + transaction)
  */
 export async function POST(req: NextRequest) {
   const auth = requireUser(req);
@@ -72,9 +78,8 @@ export async function POST(req: NextRequest) {
     ? "carmenita.mcq.lecture"
     : "carmenita.mcq.document";
 
-  let generated;
-  try {
-    generated = await generateQuizQuestions({
+  const job = startJob(userId, chunkText(doc.text).length, async (progress) => {
+    const { questions: parsedQuestions, dropped } = await generateQuizQuestions({
       docText: doc.text,
       provider,
       settings,
@@ -86,40 +91,30 @@ export async function POST(req: NextRequest) {
       temperature,
       defaultSubject: defaultSubject ?? null,
       defaultLesson: defaultLesson ?? null,
+      onProgress: progress,
     });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown generation error";
-    const status = /401|403|invalid api key|authentication/i.test(msg) ? 401 : 500;
-    return NextResponse.json({ error: msg }, { status });
-  }
-
-  const { questions: parsedQuestions, dropped } = generated;
-  if (parsedQuestions.length === 0) {
-    const copied = dropped.copied + dropped.duplicate > 0;
-    return NextResponse.json(
-      {
-        error: copied
+    if (parsedQuestions.length === 0) {
+      throw new Error(
+        dropped.copied + dropped.duplicate > 0
           ? "Every generated question copied the document word for word or repeated another, so none were kept — try again."
           : "No questions were generated — the LLM output was empty or malformed.",
-        dropped,
-      },
-      { status: 502 },
-    );
-  }
-
-  const { quizId, questionCount } = insertQuizAndQuestions({
-    userId,
-    title,
-    settings,
-    provider,
-    parsedQuestions,
-    sourceType: "document",
-    sourceDocumentId: documentId,
-    sourceLabel: doc.filename,
-    defaultSubject,
-    defaultLesson,
-    defaultTags,
+      );
+    }
+    const { quizId, questionCount } = insertQuizAndQuestions({
+      userId,
+      title,
+      settings,
+      provider,
+      parsedQuestions,
+      sourceType: "document",
+      sourceDocumentId: documentId,
+      sourceLabel: doc.filename,
+      defaultSubject,
+      defaultLesson,
+      defaultTags,
+    });
+    return { quizId, questionCount, dropped };
   });
 
-  return NextResponse.json({ quizId, questionCount, dropped });
+  return NextResponse.json({ jobId: job.id }, { status: 202 });
 }

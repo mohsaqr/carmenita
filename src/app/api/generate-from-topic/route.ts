@@ -34,8 +34,9 @@ import { requireUser } from "@/lib/auth";
  *      user-authored).
  *   4. Return the new quizId
  *
- * The response shape is identical to /api/generate-quiz so the frontend
- * can navigate the same way (`router.push('/quiz/' + data.quizId)`).
+ * Unlike /api/generate-quiz (a background job), each batch answers
+ * directly: one LLM call of ≤ TOPIC_BATCH_SIZE questions fits within the
+ * tunnel's ~100 s request limit.
  */
 export async function POST(req: NextRequest) {
   const auth = requireUser(req);

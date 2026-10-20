@@ -34,10 +34,36 @@ export interface GenerateQuizArgs {
   /** Optional taxonomy hints injected into the prompt as default values. */
   defaultSubject?: string | null;
   defaultLesson?: string | null;
+  /** Called each time a chunk's LLM call finishes, with (finished, total). */
+  onProgress?: (finished: number, total: number) => void;
+}
+
+/** Chunk LLM calls in flight at once (a 50k-char document makes at most 2). */
+export const CHUNK_CONCURRENCY = 3;
+
+/**
+ * `Promise.all(items.map(fn))` with at most `limit` calls running at once.
+ * Results keep the input order.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /**
- * Document / lecture generation, one LLM call per chunk. Each chunk's
+ * Document / lecture generation, one LLM call per chunk, run in parallel. Each chunk's
  * questions go through the quality gate against THAT chunk's text (so
  * copied sentences are caught) and against every question kept so far
  * (so chunks don't repeat each other).
@@ -54,6 +80,7 @@ export async function generateQuizQuestions(
     temperature,
     defaultSubject,
     defaultLesson,
+    onProgress,
   } = args;
 
   if (!provider.apiKey && provider.providerType !== "ollama" && provider.providerType !== "lmstudio") {
@@ -77,11 +104,14 @@ export async function generateQuizQuestions(
   const errors: string[] = [];
   let dropped: QualityDrops = NO_DROPS;
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
+  // The LLM calls run in parallel (at most CHUNK_CONCURRENCY at a time) —
+  // one after another, two ~60 s calls made a document quiz take over two
+  // minutes. The replies are then reviewed in chunk order, so each chunk is
+  // still checked against the questions every earlier chunk kept.
+  let finished = 0;
+  const replies = await mapWithConcurrency(chunks, CHUNK_CONCURRENCY, async (chunk, i) => {
     const count = perChunkCounts[i];
-    if (count <= 0) continue;
-
+    if (count <= 0) return null;
     const systemPrompt = `${renderPrompt(template, {
       n: String(count),
       allowedTypes: allowedTypesCsv,
@@ -90,15 +120,27 @@ export async function generateQuizQuestions(
       defaultSubject: defaultSubject ?? "",
       defaultLesson: defaultLesson ?? "",
     })}\n\n${purposeBlock}`;
-
     try {
-      const { output: raw } = await callLLM(
+      const { output } = await callLLM(
         settingsFromProvider(provider, { temperature }),
         systemPrompt,
         "Generate the questions now as a JSON array.",
       );
-      const reviewed = reviewGenerated(parseQuestionArray(raw), {
-        sources: [chunk.text],
+      return { output } as const;
+    } catch (error) {
+      return { error } as const;
+    } finally {
+      finished += 1;
+      onProgress?.(finished, chunks.length);
+    }
+  });
+
+  replies.forEach((reply, i) => {
+    if (!reply) return;
+    try {
+      if ("error" in reply) throw reply.error;
+      const reviewed = reviewGenerated(parseQuestionArray(reply.output), {
+        sources: [chunks[i].text],
         avoid: results.map((q) => q.question),
         allowedTypes,
       });
@@ -107,12 +149,12 @@ export async function generateQuizQuestions(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`Chunk ${i + 1}/${chunks.length}: ${msg}`);
-      // Auth errors are non-retryable — abort the whole job if we hit one
+      // Auth errors are non-retryable — fail the whole job if we hit one
       if (/401|403|invalid api key|authentication/i.test(msg)) {
         throw err;
       }
     }
-  }
+  });
 
   if (results.length === 0) {
     throw new Error(

@@ -50,6 +50,8 @@ const quizRoute = await import("@/app/api/quizzes/[id]/route");
 const attemptsRoute = await import("@/app/api/attempts/route");
 const attemptRoute = await import("@/app/api/attempts/[id]/route");
 const overviewRoute = await import("@/app/api/analytics/overview/route");
+const jobRoute = await import("@/app/api/generate-quiz/jobs/[id]/route");
+const { startJob } = await import("@/lib/generation-jobs");
 
 afterAll(() => {
   sqlite.close();
@@ -175,6 +177,13 @@ describe("Bob cannot reach Alice's bank", () => {
       params({ id: aliceAttemptId }),
     );
     expect(submit.status).toBe(404);
+  });
+
+  it("Bob can't follow Alice's generation job", async () => {
+    const job = startJob(alice.id, 1, async () => ({ quizId: aliceQuizId, questionCount: 3 }));
+    expect((await jobRoute.GET(req(`/api/generate-quiz/jobs/${job.id}`, aliceToken), params({ id: job.id }))).status).toBe(200);
+    expect((await jobRoute.GET(req(`/api/generate-quiz/jobs/${job.id}`, bobToken), params({ id: job.id }))).status).toBe(404);
+    expect((await jobRoute.GET(req(`/api/generate-quiz/jobs/${job.id}`, null), params({ id: job.id }))).status).toBe(401);
   });
 
   it("signed-out requests get 401 from data routes", async () => {
