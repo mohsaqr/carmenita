@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * PATCH /api/bank/questions/[id] — partial update of a single
@@ -21,7 +22,7 @@ const PatchSchema = z.object({
   notes: z.string().max(10_000).nullable().optional(),
 });
 
-export async function PATCH(
+async function handlePATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -77,7 +78,7 @@ export async function PATCH(
  * Cascade deletes its quiz_questions junction rows (so it vanishes
  * from any quiz) and its answer rows.
  */
-export async function DELETE(
+async function handleDELETE(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -94,3 +95,6 @@ export async function DELETE(
   }
   return NextResponse.json({ deleted: id });
 }
+
+export const PATCH = withLog(handlePATCH);
+export const DELETE = withLog(handleDELETE);

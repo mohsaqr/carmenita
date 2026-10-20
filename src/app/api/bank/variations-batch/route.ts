@@ -6,6 +6,7 @@ import { questions } from "@/db/schema";
 import { BankVariationsBatchSchema } from "@/lib/validation";
 import { generateVariations } from "@/lib/llm-variations";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * POST /api/bank/variations-batch
@@ -31,7 +32,7 @@ import { requireUser } from "@/lib/auth";
  * the explain/retag routes). A single LLM failure does NOT abort the
  * batch. Auth errors (401/403) DO abort.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -150,3 +151,5 @@ export async function POST(req: NextRequest) {
     parents: parents.length,
   });
 }
+
+export const POST = withLog(handlePOST);

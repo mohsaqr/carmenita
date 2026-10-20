@@ -6,13 +6,14 @@ import { getSetting } from "@/lib/settings-store";
 import { resolveScoringMethod, scoreQuestion, SCORING_SETTING_KEY, SERVER_DEFAULT_SCORING } from "@/lib/scoring";
 import { SubmitAttemptSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * GET /api/attempts/[id] — fetch an attempt with its answers joined to
  * the questions (through the quiz_questions junction). Used by the
  * results page.
  */
-export async function GET(
+async function handleGET(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -82,7 +83,7 @@ export async function GET(
  * Total questions is the count of rows in `quiz_questions` for this
  * quiz, NOT the length of the submitted answers array.
  */
-export async function PATCH(
+async function handlePATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -191,3 +192,6 @@ export async function PATCH(
     answers: scoredAnswers,
   });
 }
+
+export const GET = withLog(handleGET);
+export const PATCH = withLog(handlePATCH);

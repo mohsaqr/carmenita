@@ -8,6 +8,9 @@
  */
 export const TOPIC_BATCH_SIZE = 20;
 
+/** Most questions one generation run (document or topic) may ask for. */
+export const MAX_QUESTIONS = 200;
+
 /**
  * Split a question count into batch sizes, largest first, none above `size`
  * (45 → [20, 20, 5]). Empty for a count below 1.

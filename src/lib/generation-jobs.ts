@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { currentRef, logLine } from "@/lib/request-log";
 
 /**
  * Background generation jobs.
@@ -25,6 +26,8 @@ export interface JobResult {
 export interface GenerationJob {
   id: string;
   userId: string;
+  /** Log ref of the request that started the job (shown with its error). */
+  ref?: string;
   status: "running" | "done" | "error";
   /** Steps finished so far (document chunks), out of `total`. */
   done: number;
@@ -59,23 +62,28 @@ export function pruneJobs(now = Date.now()): void {
  * Start `work` in the background and return the job at once. `work`
  * reports progress through `progress(done, total)`; its result or error
  * is stored on the job. The returned promise of `work` is never left
- * unhandled.
+ * unhandled. Start, finish and failure are logged under the ref of the
+ * request that started the job, with `fields` (file, size, …) on the
+ * start line.
  */
 export function startJob(
   userId: string,
   total: number,
   work: (progress: (done: number, total: number) => void) => Promise<JobResult>,
+  fields: Record<string, string | number | boolean | undefined> = {},
 ): GenerationJob {
   pruneJobs();
   const job: GenerationJob = {
     id: randomUUID(),
     userId,
+    ref: currentRef(),
     status: "running",
     done: 0,
     total,
     startedAt: Date.now(),
   };
   jobs().set(job.id, job);
+  logLine("job", { job: job.id, parts: total, ...fields }, "info", "started");
 
   const progress = (done: number, newTotal: number) => {
     job.done = done;
@@ -86,12 +94,19 @@ export function startJob(
       job.status = "done";
       job.result = result;
       job.finishedAt = Date.now();
+      logLine("job", {
+        job: job.id,
+        quiz: result.quizId,
+        questions: result.questionCount,
+        ms: job.finishedAt - job.startedAt,
+        dropped: result.dropped === undefined ? undefined : JSON.stringify(result.dropped),
+      }, "info", "done");
     },
     (err: unknown) => {
       job.status = "error";
       job.error = err instanceof Error ? err.message : String(err);
       job.finishedAt = Date.now();
-      console.error(`[job] ${job.id} failed after ${job.finishedAt - job.startedAt}ms: ${job.error}`);
+      logLine("job", { job: job.id, ms: job.finishedAt - job.startedAt, error: job.error }, "error", "failed");
     },
   );
   return job;

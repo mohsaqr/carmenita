@@ -21,6 +21,26 @@ export interface ExtractResult {
   text: string;
   truncated: boolean;
   charCount: number;
+  /** PDF pages that threw while reading (their text is missing). */
+  failedPages?: number;
+}
+
+/**
+ * The file could not be read because of a problem on the server (a
+ * missing module or worker, a library that failed to load), not because
+ * of the file. The upload route answers 500 and tells the user the file
+ * is probably fine; the message here goes to the log.
+ */
+export class ServerReadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ServerReadError";
+  }
+}
+
+/** Messages that mean our setup is broken, not the user's file. */
+export function isServerFault(message: string): boolean {
+  return /fake worker|cannot find module|err_module_not_found|requires jszip|failed to load|standardfontdata/i.test(message);
 }
 
 const CHAR_LIMIT = 50_000;
@@ -260,19 +280,24 @@ async function extractPdf(bytes: Uint8Array): Promise<ExtractResult> {
     if (lower.includes("invalid pdf") || lower.includes("unexpected")) {
       throw new Error("This PDF appears to be corrupted or is not a valid PDF file.");
     }
+    if (isServerFault(msg)) throw new ServerReadError(`PDF reader failed to start: ${msg}`);
     throw new Error(`PDF could not be read: ${msg}`);
   }
 
-  // First pass: default normalization
+  // First pass: default normalization. A page that throws is skipped but
+  // counted, so the upload can say so and the log shows why.
   let pageTexts: string[] = [];
+  let failedPages = 0;
+  let firstPageError = "";
   for (let i = 1; i <= pdf.numPages; i++) {
     try {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
       const text = reconstructText(content.items);
       if (text.trim()) pageTexts.push(text);
-    } catch {
-      /* skip failed page */
+    } catch (err) {
+      failedPages += 1;
+      firstPageError ||= err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -298,13 +323,18 @@ async function extractPdf(bytes: Uint8Array): Promise<ExtractResult> {
   }
 
   if (!fullText.trim()) {
+    if (failedPages > 0) {
+      const what = `${failedPages} of ${pdf.numPages} pages could not be read: ${firstPageError}`;
+      if (isServerFault(firstPageError)) throw new ServerReadError(what);
+      throw new Error(`This PDF could not be read — ${what}`);
+    }
     throw new Error(
-      "This PDF appears to be image-only or has no extractable text. " +
-        "Please use a PDF with a text layer, or run OCR first.",
+      `No text found on any of the ${pdf.numPages} pages — the pages are probably pictures (scanned or exported as images). ` +
+        "Please use a PDF with selectable text, or run OCR first.",
     );
   }
 
-  return finalize(fullText);
+  return { ...finalize(fullText), failedPages };
 }
 
 // ── PPTX via jszip ───────────────────────────────────────────────────────────
@@ -335,7 +365,7 @@ async function extractPptx(bytes: Uint8Array): Promise<ExtractResult> {
   try {
     JSZipModule = (await import("jszip")).default;
   } catch (err) {
-    throw new Error(
+    throw new ServerReadError(
       `PPTX support requires jszip: ${err instanceof Error ? err.message : String(err)}`,
     );
   }

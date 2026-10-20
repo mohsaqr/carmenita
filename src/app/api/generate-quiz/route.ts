@@ -3,13 +3,13 @@ import { db } from "@/db/client";
 import { documents } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { GenerateQuizSchema } from "@/lib/validation";
-import { generateQuizQuestions } from "@/lib/llm-quiz";
+import { generateQuizQuestions, planGeneration } from "@/lib/llm-quiz";
 import { insertQuizAndQuestions } from "@/lib/db-helpers";
 import { isLectureFilename } from "@/lib/doc-extract";
 import { resolvePrompt } from "@/lib/settings-store";
 import { requireUser } from "@/lib/auth";
-import { chunkText } from "@/lib/chunk";
 import { startJob } from "@/lib/generation-jobs";
+import { noteLog, withLog } from "@/lib/request-log";
 
 /**
  * POST /api/generate-quiz
@@ -30,7 +30,7 @@ import { startJob } from "@/lib/generation-jobs";
  *   4. In the job: generateQuizQuestions (chunks in parallel), then persist
  *      via the shared helper (handles auto-tag fallback + transaction)
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -74,11 +74,14 @@ export async function POST(req: NextRequest) {
   // slide-aware prompt (`carmenita.mcq.lecture`) instead of the generic
   // document prompt. Detection via filename suffix is sufficient because
   // extractPptx is the only path that produces "--- Slide N ---" markers.
+  const model = `${provider.providerType}/${provider.defaultModel}`;
+  noteLog({ file: doc.filename, chars: doc.charCount, questions: settings.questionCount, model });
+
   const promptId = isLectureFilename(doc.filename)
     ? "carmenita.mcq.lecture"
     : "carmenita.mcq.document";
 
-  const job = startJob(userId, chunkText(doc.text).length, async (progress) => {
+  const job = startJob(userId, planGeneration(doc.text, settings.questionCount).length, async (progress) => {
     const { questions: parsedQuestions, dropped } = await generateQuizQuestions({
       docText: doc.text,
       provider,
@@ -114,7 +117,9 @@ export async function POST(req: NextRequest) {
       defaultTags,
     });
     return { quizId, questionCount, dropped };
-  });
+  }, { file: doc.filename, chars: doc.charCount, questions: settings.questionCount, model });
 
   return NextResponse.json({ jobId: job.id }, { status: 202 });
 }
+
+export const POST = withLog(handlePOST);

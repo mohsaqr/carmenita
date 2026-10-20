@@ -13,6 +13,7 @@ import {
   SCORING_SETTING_KEY,
   SERVER_DEFAULT_SCORING,
 } from "@/lib/scoring";
+import { withLog } from "@/lib/request-log";
 
 /**
  * GET /api/quizzes/[id] — fetch a quiz with all its questions in order.
@@ -25,7 +26,7 @@ import {
  * Soft-deleted quizzes (deleted_at IS NOT NULL) return 404 here.
  * To view or restore them, use `/api/trash`.
  */
-export async function GET(
+async function handleGET(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -93,7 +94,7 @@ const PatchSchema = z.object({
  * Sets (or clears, with null) this quiz's scoring override and re-scores
  * this quiz's finished attempts with it. Returns { scoring, rescored }.
  */
-export async function PATCH(
+async function handlePATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -150,7 +151,7 @@ export async function PATCH(
  *
  * For permanent deletion, see `DELETE /api/trash/[id]`.
  */
-export async function DELETE(
+async function handleDELETE(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -169,3 +170,7 @@ export async function DELETE(
   }
   return NextResponse.json({ trashed: id, deletedAt: now });
 }
+
+export const GET = withLog(handleGET);
+export const PATCH = withLog(handlePATCH);
+export const DELETE = withLog(handleDELETE);

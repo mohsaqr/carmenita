@@ -5,6 +5,7 @@ import { db, sqlite } from "@/db/client";
 import { questions, quizzes, quizQuestions } from "@/db/schema";
 import { CreateQuizFromBankSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * POST /api/bank/quiz
@@ -15,7 +16,7 @@ import { requireUser } from "@/lib/auth";
  * NO source document (documentId = null) and NO LLM provider (since
  * we're not generating anything — just assembling).
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -85,3 +86,5 @@ export async function POST(req: NextRequest) {
     questionCount: questionIds.length,
   });
 }
+
+export const POST = withLog(handlePOST);

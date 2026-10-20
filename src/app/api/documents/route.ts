@@ -3,16 +3,17 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
 import { documents } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
-import { extractText } from "@/lib/doc-extract";
+import { extractText, isServerFault, ServerReadError } from "@/lib/doc-extract";
 import { CreateDocumentSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
+import { noteLog, withLog } from "@/lib/request-log";
 
 /**
  * POST /api/documents — upload + extract a document.
  * Body: { filename, contentBase64 }
  * Returns: { id, filename, charCount, truncated, createdAt }
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { filename, contentBase64 } = parsed.data;
+  noteLog({ file: filename });
 
   // Decode base64 → Uint8Array
   let buffer: Uint8Array;
@@ -41,20 +43,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "contentBase64 is not valid base64" }, { status: 400 });
   }
 
-  // Extract text
+  noteLog({ bytes: buffer.length });
+
+  // Extract text. A problem with the file is the user's to fix (400, the
+  // message says what); a problem on our side (a missing module, the PDF
+  // worker) is ours (500, the message says the file is probably fine and
+  // the technical cause goes to the log).
   let extracted;
   try {
     extracted = await extractText(buffer, filename);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown extraction error";
+    const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof ServerReadError || isServerFault(msg)) {
+      // The user sees a plain message; the technical cause is for the log.
+      noteLog({ cause: msg });
+      return NextResponse.json(
+        {
+          error:
+            `The server could not read "${filename}" because of a problem on our side — the file itself is probably fine. ` +
+            "Please send this message to the admin.",
+        },
+        { status: 500 },
+      );
+    }
     return NextResponse.json({ error: msg }, { status: 400 });
   }
+  noteLog({ chars: extracted.charCount, truncated: extracted.truncated || undefined, failedPages: extracted.failedPages || undefined });
 
-  if (extracted.text.trim().length < 200) {
+  const usable = extracted.text.trim().length;
+  if (usable < 200) {
     return NextResponse.json(
       {
         error:
-          "Document text is too short (<200 chars). It may be image-only or empty — please upload a text-bearing PDF, DOCX, or plain text file.",
+          `Only ${usable} characters of text could be read from "${filename}" (at least 200 are needed). ` +
+          "Pages or slides that are pictures have no text to read — use a file with selectable text, or run OCR first.",
       },
       { status: 400 },
     );
@@ -78,6 +100,7 @@ export async function POST(req: NextRequest) {
     filename,
     charCount: extracted.charCount,
     truncated: extracted.truncated,
+    failedPages: extracted.failedPages ?? 0,
     createdAt: now,
   });
 }
@@ -85,7 +108,7 @@ export async function POST(req: NextRequest) {
 /**
  * GET /api/documents — list all documents (without the full text).
  */
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -104,3 +127,6 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ documents: rows });
 }
+
+export const POST = withLog(handlePOST);
+export const GET = withLog(handleGET);

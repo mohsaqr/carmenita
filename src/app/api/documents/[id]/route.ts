@@ -3,12 +3,13 @@ import { db } from "@/db/client";
 import { documents } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * DELETE /api/documents/[id] — cascade-deletes document + quizzes +
  * questions + attempts + answers via ON DELETE CASCADE foreign keys.
  */
-export async function DELETE(
+async function handleDELETE(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -29,7 +30,7 @@ export async function DELETE(
 /**
  * GET /api/documents/[id] — return the full document including text.
  */
-export async function GET(
+async function handleGET(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -47,3 +48,6 @@ export async function GET(
   }
   return NextResponse.json({ document: row });
 }
+
+export const DELETE = withLog(handleDELETE);
+export const GET = withLog(handleGET);

@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BulkDeleteSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * POST /api/bank/questions/bulk-delete
@@ -19,7 +20,7 @@ import { requireUser } from "@/lib/auth";
  * the count will be lower than the input length — not an error, just
  * the silent behavior of SQL DELETE.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -49,3 +50,5 @@ export async function POST(req: NextRequest) {
     requested: ids.length,
   });
 }
+
+export const POST = withLog(handlePOST);

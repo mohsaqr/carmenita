@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticate, createSession, SESSION_COOKIE } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 const LoginSchema = z.object({
   username: z.string().min(1).max(200),
@@ -15,7 +16,7 @@ const LoginSchema = z.object({
  * The cookie is `Secure` only when the request arrived over HTTPS, so
  * the plain-HTTP LAN deploy still works.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   let body: unknown;
   try {
     body = await req.json();
@@ -45,3 +46,5 @@ export async function POST(req: NextRequest) {
   });
   return res;
 }
+
+export const POST = withLog(handlePOST);

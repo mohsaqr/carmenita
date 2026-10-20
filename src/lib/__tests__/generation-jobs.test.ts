@@ -26,7 +26,7 @@ globalThis.__carmenitaSqlite = sqlite;
 migrate(testDb, { migrationsFolder: path.join(ROOT, "src/db/migrations") });
 
 const auth = await import("@/lib/auth");
-const { generateQuizQuestions, mapWithConcurrency } = await import("@/lib/llm-quiz");
+const { generateQuizQuestions, mapWithConcurrency, planGeneration } = await import("@/lib/llm-quiz");
 const jobs = await import("@/lib/generation-jobs");
 const { pollGenerationJob, readJson } = await import("@/lib/generation-poll");
 const generateRoute = await import("@/app/api/generate-quiz/route");
@@ -280,5 +280,49 @@ describe("pollGenerationJob", () => {
   it("turns a proxy's HTML error page into a readable error", async () => {
     const html = new Response("<!DOCTYPE html><title>524</title>", { status: 524 });
     await expect(readJson(html)).rejects.toThrow("The server took too long to answer (HTTP 524).");
+  });
+});
+
+describe("planGeneration (more questions)", () => {
+  // Carmen's lecture: 95 slides, 37,562 characters.
+  const LECTURE = Array.from({ length: 95 }, (_, i) =>
+    `PAGE ${i + 1}\n${Array.from({ length: 40 }, (_, j) => `term${i}x${j}`).join(" ")}.`,
+  ).join("\n\n");
+
+  const check = (text: string, n: number) => {
+    const tasks = planGeneration(text, n);
+    expect(tasks.reduce((sum, t) => sum + t.count, 0)).toBe(n);
+    expect(tasks.every((t) => t.count >= 1 && t.count <= 20)).toBe(true);
+    // the last part reaches the end of the document
+    expect(Math.max(...tasks.map((t) => t.chunk.endChar))).toBe(text.length);
+    return tasks;
+  };
+
+  it("keeps a small quiz to one call over the whole document", () => {
+    const tasks = check(LECTURE, 10);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].chunk.text).toBe(LECTURE);
+  });
+
+  it("splits 100 questions into ~5 parts across the lecture, ≤ 20 per call", () => {
+    const tasks = check(LECTURE, 100);
+    expect(tasks.length).toBeGreaterThanOrEqual(5);
+    expect(tasks.length).toBeLessThanOrEqual(7);
+    // different stretches of the document, in order
+    const starts = tasks.map((t) => t.chunk.startChar);
+    expect(starts).toEqual([...starts].sort((a, b) => a - b));
+    expect(new Set(starts).size).toBe(tasks.length);
+  });
+
+  it("still caps calls at 20 when a short document can't be split that finely", () => {
+    check("A short note about GABA receptors. ".repeat(60), 200);
+  });
+
+  it("the settings schema allows up to MAX_QUESTIONS and no more", async () => {
+    const { QuizSettingsSchema } = await import("@/lib/validation");
+    const { MAX_QUESTIONS } = await import("@/lib/topic-batches");
+    expect(MAX_QUESTIONS).toBe(200);
+    expect(QuizSettingsSchema.safeParse({ ...settings, questionCount: 200 }).success).toBe(true);
+    expect(QuizSettingsSchema.safeParse({ ...settings, questionCount: 201 }).success).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { LayoutShell } from "@/components/LayoutShell";
 import { PasswordGate } from "@/components/PasswordGate";
 import { StaticApiBootstrap } from "@/components/StaticApiBootstrap";
+import { ClientErrorReporter } from "@/components/ClientErrorReporter";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -48,6 +49,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <PasswordGate>
           <StaticApiBootstrap />
+          <ClientErrorReporter />
           <TooltipProvider>
             <LayoutShell>
               {children}

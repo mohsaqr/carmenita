@@ -22,7 +22,7 @@ import {
 import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useActiveProvider } from "@/hooks/useActiveProvider";
-import { VARIATION_TYPE_LABELS } from "@/lib/llm-variations";
+import { VARIATION_TYPE_LABELS } from "@/lib/variation-labels";
 import type { Question, VariationType } from "@/types";
 
 /**

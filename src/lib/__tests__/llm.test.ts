@@ -161,7 +161,7 @@ describe("call logging", () => {
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(404, { error: { message: "model: nope" } })));
     await callLLM({ provider: "openai", model: "nope", apiKey: "sk-secret", retries: 0 }, "s", "u").catch(() => {});
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[llm\] openai nope \d+ms failed HTTP 404: model: nope$/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[llm\] openai nope \d+ms failed HTTP 404 error="model: nope"$/));
     const logged = [...info.mock.calls, ...warn.mock.calls].flat().join(" ");
     expect(logged).not.toContain("sk-secret");
     info.mockRestore();

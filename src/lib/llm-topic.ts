@@ -11,7 +11,8 @@ import type { ProviderConfig, QuestionType, Difficulty } from "@/types";
  * Unlike `generateQuizQuestions()` in llm-quiz.ts which chunks a long
  * document and dispatches per-chunk LLM calls, topic-based generation
  * is always a single LLM call: there is no source text to chunk, and
- * topic count is bounded by the UI to ≤ 50 per request (settings.questionCount).
+ * each request asks for at most TOPIC_BATCH_SIZE (20) questions — the
+ * client splits larger runs (up to MAX_QUESTIONS) into batches.
  *
  * Prompt id: `carmenita.mcq.topic`. Placeholders:
  *   {n}, {topic}, {subject}, {level}, {objectives},

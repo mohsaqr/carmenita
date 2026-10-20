@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { getJob } from "@/lib/generation-jobs";
+import { withLog } from "@/lib/request-log";
 
 /**
  * GET /api/generate-quiz/jobs/[id] — progress of a generation job started
@@ -11,7 +12,7 @@ import { getJob } from "@/lib/generation-jobs";
  * 404 for an unknown job, another user's job, or one lost to a server
  * restart.
  */
-export async function GET(
+async function handleGET(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -28,6 +29,8 @@ export async function GET(
     done: job.done,
     total: job.total,
     ...job.result,
-    ...(job.error ? { error: job.error } : {}),
+    ...(job.error ? { error: job.ref ? `${job.error} (ref ${job.ref})` : job.error, ref: job.ref } : {}),
   });
 }
+
+export const GET = withLog(handleGET);

@@ -7,6 +7,7 @@ import { serializeAiken } from "@/lib/formats/aiken";
 import { serializeMarkdown } from "@/lib/formats/markdown";
 import type { PortableQuestion } from "@/lib/formats/types";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * GET /api/bank/export?format=gift|aiken|markdown&[topic=]&[difficulty=]&[bloomLevel=]&[sourceType=]&[ids=]
@@ -20,7 +21,7 @@ import { requireUser } from "@/lib/auth";
  * `X-Carmenita-Skipped` response header reports how many were skipped
  * and why. Markdown and GIFT round-trip losslessly.
  */
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -135,3 +136,5 @@ export async function GET(req: NextRequest) {
     },
   });
 }
+
+export const GET = withLog(handleGET);

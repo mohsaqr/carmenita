@@ -6,6 +6,7 @@ import { questionSets, questions } from "@/db/schema";
 import { CreateQuestionSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
 import { notArchivedQuestion } from "@/lib/question-sets";
+import { withLog } from "@/lib/request-log";
 
 /**
  * GET /api/bank/questions — list questions from the global bank with
@@ -25,7 +26,7 @@ import { notArchivedQuestion } from "@/lib/question-sets";
  *
  * Returns: { questions: Question[], total: number }
  */
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -119,7 +120,7 @@ export async function GET(req: NextRequest) {
  * type-specific constraints enforced in the Zod refinement). The new
  * row gets source_type="manual" and no parent or document link.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -177,3 +178,6 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ id, created: 1 });
 }
+
+export const GET = withLog(handleGET);
+export const POST = withLog(handlePOST);

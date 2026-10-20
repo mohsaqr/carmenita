@@ -6,6 +6,7 @@ import { BankRetagSchema } from "@/lib/validation";
 import { generateTagging } from "@/lib/llm-enhance";
 import { resolvePrompt } from "@/lib/settings-store";
 import { requireUser } from "@/lib/auth";
+import { noteLog, withLog } from "@/lib/request-log";
 
 /**
  * POST /api/bank/questions/retag
@@ -27,7 +28,7 @@ import { requireUser } from "@/lib/auth";
  * merges into existing tag arrays, retag REPLACES because we're asking
  * the LLM to produce a complete tagging.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -91,5 +92,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  noteLog({
+    questions: ids.length,
+    updated,
+    failed: errors.length || undefined,
+    firstError: errors[0]?.message,
+    model: `${provider.providerType}/${provider.defaultModel}`,
+  }, errors.length ? "warn" : undefined);
   return NextResponse.json({ updated, errors });
 }
+
+export const POST = withLog(handlePOST);

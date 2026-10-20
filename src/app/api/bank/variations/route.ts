@@ -6,6 +6,7 @@ import { questions } from "@/db/schema";
 import { GenerateVariationsSchema } from "@/lib/validation";
 import { generateVariations } from "@/lib/llm-variations";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * POST /api/bank/variations
@@ -22,7 +23,7 @@ import { requireUser } from "@/lib/auth";
  * Variations are completely independent rows that happen to point back
  * to their parent.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -120,3 +121,5 @@ export async function POST(req: NextRequest) {
     parentQuestionId: original.id,
   });
 }
+
+export const POST = withLog(handlePOST);

@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { UpdateSetSchema } from "@/lib/validation";
 import { deleteSet, updateSet } from "@/lib/question-sets";
+import { withLog } from "@/lib/request-log";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 /** PATCH /api/bank/sets/[id] — body { name?, folder? } renames or moves one of your sets. `folder: null` or "" removes it from its folder. */
-export async function PATCH(req: NextRequest, ctx: Ctx) {
+async function handlePATCH(req: NextRequest, ctx: Ctx) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const { id } = await ctx.params;
@@ -29,7 +30,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 }
 
 /** DELETE /api/bank/sets/[id] — deletes one of your sets AND all of its questions. */
-export async function DELETE(req: NextRequest, ctx: Ctx) {
+async function handleDELETE(req: NextRequest, ctx: Ctx) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const { id } = await ctx.params;
@@ -37,3 +38,6 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
   if (!result) return NextResponse.json({ error: "Set not found" }, { status: 404 });
   return NextResponse.json({ deleted: id, questionsDeleted: result.questionsDeleted });
 }
+
+export const PATCH = withLog(handlePATCH);
+export const DELETE = withLog(handleDELETE);

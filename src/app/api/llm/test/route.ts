@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { settingsFromProvider, testConnection } from "@/lib/ai/llm";
 import { ProviderConfigSchema } from "@/lib/validation";
+import { withLog } from "@/lib/request-log";
 
 /**
  * POST /api/llm/test
@@ -18,7 +19,7 @@ const BodySchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
 });
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const parsed = BodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Validation failed", details: parsed.error.issues }, { status: 400 });
@@ -31,3 +32,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 }
+
+export const POST = withLog(handlePOST);

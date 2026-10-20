@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createUser, listUsers, requireAdmin, UserExistsError } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * Admin-only account management (the /users page).
@@ -18,13 +19,13 @@ const CreateSchema = z.object({
   isAdmin: z.boolean().optional(),
 });
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const auth = requireAdmin(req);
   if ("response" in auth) return auth.response;
   return NextResponse.json({ users: listUsers() });
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireAdmin(req);
   if ("response" in auth) return auth.response;
   let body: unknown;
@@ -48,3 +49,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Invalid input" }, { status: 400 });
   }
 }
+
+export const GET = withLog(handleGET);
+export const POST = withLog(handlePOST);

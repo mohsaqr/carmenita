@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { friendlyError, listModels, settingsFromProvider } from "@/lib/ai/llm";
 import { ProviderConfigSchema } from "@/lib/validation";
+import { withLog } from "@/lib/request-log";
 
 /**
  * POST /api/llm/models
@@ -16,7 +17,7 @@ import { ProviderConfigSchema } from "@/lib/validation";
  */
 const BodySchema = z.object({ provider: ProviderConfigSchema });
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const parsed = BodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Validation failed", details: parsed.error.issues }, { status: 400 });
@@ -28,3 +29,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: friendlyError(err), models: [] });
   }
 }
+
+export const POST = withLog(handlePOST);

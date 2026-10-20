@@ -6,6 +6,7 @@ import { BankExplainSchema } from "@/lib/validation";
 import { generateExplanation } from "@/lib/llm-enhance";
 import { resolvePrompt } from "@/lib/settings-store";
 import { requireUser } from "@/lib/auth";
+import { noteLog, withLog } from "@/lib/request-log";
 
 /**
  * POST /api/bank/questions/explain
@@ -33,7 +34,7 @@ import { requireUser } from "@/lib/auth";
  * - Updates are per-row, not in a single transaction, so partial progress
  *   is visible even if the process is interrupted.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -103,5 +104,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  noteLog({
+    questions: ids.length,
+    updated,
+    skipped,
+    failed: errors.length || undefined,
+    firstError: errors[0]?.message,
+    model: `${provider.providerType}/${provider.defaultModel}`,
+  }, errors.length ? "warn" : undefined);
   return NextResponse.json({ updated, skipped, errors });
 }
+
+export const POST = withLog(handlePOST);

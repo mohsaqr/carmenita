@@ -5,6 +5,7 @@ import { db } from "@/db/client";
 import { attempts, quizzes } from "@/db/schema";
 import { CreateAttemptSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * GET /api/attempts — list all attempts across every quiz, joined with
@@ -16,7 +17,7 @@ import { requireUser } from "@/lib/auth";
  * Returns: { attempts: [{ id, quizId, quizTitle, startedAt,
  * completedAt, score, questionCount }] }
  */
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
  * Body: { quizId }
  * Returns: { id, quizId, startedAt }
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -95,3 +96,6 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ id, quizId: parsed.data.quizId, startedAt });
 }
+
+export const GET = withLog(handleGET);
+export const POST = withLog(handlePOST);

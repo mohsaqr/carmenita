@@ -3,6 +3,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db/client";
 import { quizzes } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * POST /api/trash/[id]/restore — restore a trashed quiz.
@@ -16,7 +17,7 @@ import { requireUser } from "@/lib/auth";
  * than a nested `/restore` route) because there's only one meaningful
  * POST action on a trashed row.
  */
-export async function POST(
+async function handlePOST(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -50,7 +51,7 @@ export async function POST(
  * Questions in the bank are NOT touched — the bank is the source of
  * truth and is never reduced by quiz deletion.
  */
-export async function DELETE(
+async function handleDELETE(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -70,3 +71,6 @@ export async function DELETE(
   }
   return NextResponse.json({ permanentlyDeleted: id });
 }
+
+export const POST = withLog(handlePOST);
+export const DELETE = withLog(handleDELETE);

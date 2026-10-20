@@ -4,6 +4,7 @@ import { db, sqlite } from "@/db/client";
 import { questions } from "@/db/schema";
 import { BulkTagSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 /**
  * PATCH /api/bank/questions/bulk-tag
@@ -22,7 +23,7 @@ import { requireUser } from "@/lib/auth";
  * medium banks (hundreds of rows) this is fine; for larger banks we'd
  * add a junction table.
  */
-export async function PATCH(req: NextRequest) {
+async function handlePATCH(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -82,3 +83,5 @@ export async function PATCH(req: NextRequest) {
     ids: affected.map((r) => r.id),
   });
 }
+
+export const PATCH = withLog(handlePATCH);

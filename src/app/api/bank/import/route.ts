@@ -7,6 +7,7 @@ import { parseImport } from "@/lib/formats/parse-import";
 import type { QuestionSource } from "@/db/schema";
 import { findOrCreateSet } from "@/lib/question-sets";
 import { requireUser } from "@/lib/auth";
+import { noteLog, withLog } from "@/lib/request-log";
 
 /**
  * POST /api/bank/import
@@ -18,7 +19,7 @@ import { requireUser } from "@/lib/auth";
  * same name already exists in the same folder).
  * Returns { imported, warnings, ids, setId, setCreated }.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -41,11 +42,22 @@ export async function POST(req: NextRequest) {
 
   // Falls back to another format when the chosen one finds nothing.
   const { questions: parsedQuestions, warnings, format: usedFormat } = parseImport(format, text);
+  noteLog({
+    format,
+    used: usedFormat !== format ? usedFormat : undefined,
+    set: setName,
+    chars: text.length,
+    imported: parsedQuestions.length,
+    warnings: warnings.length || undefined,
+    firstWarning: warnings[0],
+  });
 
   if (parsedQuestions.length === 0) {
     return NextResponse.json(
       {
-        error: "No valid questions found in the provided text.",
+        error: warnings.length
+          ? `No valid questions found in the provided text. First problem: ${warnings[0]}`
+          : "No valid questions found in the provided text.",
         warnings,
       },
       { status: 400 },
@@ -104,3 +116,5 @@ export async function POST(req: NextRequest) {
     setCreated: set.created,
   });
 }
+
+export const POST = withLog(handlePOST);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin, resetPassword } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 const ResetSchema = z.object({ password: z.string().max(1000) });
 
@@ -10,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * POST /api/admin/users/[id]/password — body { password }
  * Admin-only. Sets a new password and signs that user out everywhere.
  */
-export async function POST(req: NextRequest, ctx: Ctx) {
+async function handlePOST(req: NextRequest, ctx: Ctx) {
   const auth = requireAdmin(req);
   if ("response" in auth) return auth.response;
   const { id } = await ctx.params;
@@ -31,3 +32,5 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   }
   return NextResponse.json({ ok: true });
 }
+
+export const POST = withLog(handlePOST);

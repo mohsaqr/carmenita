@@ -40,8 +40,9 @@ import { useActiveProvider } from "@/hooks/useActiveProvider";
 import { NoProviderWarning } from "@/components/NoProviderWarning";
 import { useAppStore } from "@/lib/store";
 import type { QuestionType, GenerationJobState } from "@/types";
-import { batchSizes } from "@/lib/topic-batches";
+import { batchSizes, MAX_QUESTIONS } from "@/lib/topic-batches";
 import { pollGenerationJob, readJson } from "@/lib/generation-poll";
+import { reportClientError } from "@/lib/client-errors";
 import { addDrops, dropsMessage, NO_DROPS, type QualityDrops } from "@/lib/question-quality";
 import {
   DEFAULT_PURPOSE,
@@ -238,17 +239,30 @@ function CreatePageInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename: docFile.name, contentBase64: base64 }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+      const body = await readJson(res);
+      if (!res.ok) throw new Error(String(body.error ?? `Upload failed (${res.status})`));
+      const data = body as unknown as {
+        id: string;
+        filename: string;
+        charCount: number;
+        truncated: boolean;
+        failedPages?: number;
+      };
       setDocInfo(data);
       setJob({ status: "idle" });
       toast.success(
         `Extracted ${data.charCount.toLocaleString()} characters${
           data.truncated ? " (truncated to 50k)" : ""
         }`,
+        {
+          description: data.failedPages
+            ? `${data.failedPages} page${data.failedPages === 1 ? "" : "s"} could not be read and ${data.failedPages === 1 ? "is" : "are"} missing.`
+            : undefined,
+        },
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
+      reportClientError("create.upload", err);
       setJob({ status: "error", message: msg });
       toast.error(msg);
     }
@@ -289,6 +303,7 @@ function CreatePageInner() {
       router.push(`/quiz?id=${data.quizId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
+      reportClientError("create.generate", err);
       setJob({ status: "error", message: msg });
       toast.error(msg);
     }
@@ -342,14 +357,15 @@ function CreatePageInner() {
             ...(quizId ? { appendToQuizId: quizId, avoid: asked } : {}),
           }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `Generation failed (${res.status})`);
+        const data = await readJson(res);
+        if (!res.ok) throw new Error(String(data.error ?? `Generation failed (${res.status})`));
         quizId = data.quizId as string;
         made += data.questionCount as number;
         dropped = addDrops(dropped, (data.dropped as QualityDrops | undefined) ?? NO_DROPS);
         asked.push(...((data.questions as string[] | undefined) ?? []));
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
+        reportClientError("create.topic", err);
         if (quizId) {
           // Earlier batches are saved — keep them rather than throw them away.
           toast.error(`Stopped after ${made} of ${questionCount} questions: ${msg}`);
@@ -555,10 +571,10 @@ function CreatePageInner() {
                   id="count"
                   type="number"
                   min={1}
-                  max={50}
+                  max={MAX_QUESTIONS}
                   value={questionCount}
                   onChange={(e) =>
-                    setQuestionCount(parseInt(e.target.value, 10) || 10)
+                    setQuestionCount(Math.min(MAX_QUESTIONS, parseInt(e.target.value, 10) || 10))
                   }
                 />
               </div>

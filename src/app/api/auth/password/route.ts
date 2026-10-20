@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { changeOwnPassword, requireUser, SESSION_COOKIE } from "@/lib/auth";
+import { withLog } from "@/lib/request-log";
 
 const ChangeSchema = z.object({
   currentPassword: z.string().max(1000),
@@ -14,7 +15,7 @@ const ChangeSchema = z.object({
  * password is wrong or the new one is too short. Other devices are
  * signed out; this browser stays signed in.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   let body: unknown;
@@ -42,3 +43,5 @@ export async function POST(req: NextRequest) {
   }
   return NextResponse.json({ ok: true });
 }
+
+export const POST = withLog(handlePOST);

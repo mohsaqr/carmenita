@@ -3,16 +3,20 @@ import { getPrompt, purposeStyleBlock, renderPrompt } from "@/lib/prompts";
 import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
 import { addDrops, NO_DROPS, reviewGenerated, type QualityDrops, type ReviewedBatch } from "@/lib/question-quality";
 import { effectiveAllowedTypes } from "@/lib/question-purpose";
-import { chunkText, distributeQuestions } from "@/lib/chunk";
+import { chunkText, distributeQuestions, type Chunk } from "@/lib/chunk";
+import { batchSizes, TOPIC_BATCH_SIZE } from "@/lib/topic-batches";
 import type { ProviderConfig, QuizSettings } from "@/types";
 
 /**
  * High-level question generation.
  *
- * - If the document fits in one chunk, makes a single LLM call.
- * - If it doesn't, splits into chunks, allocates a question count per
- *   chunk proportional to chunk length, generates each batch, and
- *   concatenates the results.
+ * - Splits the document into one part per TOPIC_BATCH_SIZE (20) questions
+ *   (`planGeneration`), so every LLM call asks for at most 20 and each
+ *   covers its own stretch of the document — 100 questions on a 95-slide
+ *   lecture become 5 calls over ~19 slides each, not one call that hits
+ *   the output-token cap.
+ * - Allocates questions per part proportional to its length, generates
+ *   the parts in parallel, and concatenates the results.
  * - Per-chunk failures don't abort the whole job — we collect results
  *   from successful chunks and only throw if *no* chunk succeeded.
  * - Drops duplicate questions (exact `question` text match) across
@@ -38,7 +42,7 @@ export interface GenerateQuizArgs {
   onProgress?: (finished: number, total: number) => void;
 }
 
-/** Chunk LLM calls in flight at once (a 50k-char document makes at most 2). */
+/** LLM calls in flight at once for one document quiz. */
 export const CHUNK_CONCURRENCY = 3;
 
 /**
@@ -60,6 +64,29 @@ export async function mapWithConcurrency<T, R>(
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
+}
+
+/** Largest part a document is split into, whatever the question count. */
+export const MAX_PART_CHARS = 40_000;
+
+export interface GenerationTask {
+  chunk: Chunk;
+  /** Questions this call asks for (≤ TOPIC_BATCH_SIZE). */
+  count: number;
+}
+
+/**
+ * The LLM calls for `questionCount` questions from `docText`: one part per
+ * TOPIC_BATCH_SIZE questions (at most MAX_PART_CHARS each), each part's
+ * share split again into calls of ≤ TOPIC_BATCH_SIZE when a part is too
+ * short to divide further. Pure — the route uses it for the job's total.
+ */
+export function planGeneration(docText: string, questionCount: number): GenerationTask[] {
+  const parts = Math.max(1, Math.ceil(questionCount / TOPIC_BATCH_SIZE));
+  const maxChars = Math.max(1000, Math.min(MAX_PART_CHARS, Math.ceil(docText.length / parts)));
+  const chunks = chunkText(docText, { maxChars, overlap: Math.min(1000, Math.floor(maxChars / 10)) });
+  const counts = distributeQuestions(chunks, questionCount);
+  return chunks.flatMap((chunk, i) => batchSizes(counts[i]).map((count) => ({ chunk, count })));
 }
 
 /**
@@ -97,8 +124,7 @@ export async function generateQuizQuestions(
   );
   const allowedTypesCsv = allowedTypes.join(", ");
 
-  const chunks = chunkText(docText);
-  const perChunkCounts = distributeQuestions(chunks, settings.questionCount);
+  const tasks = planGeneration(docText, settings.questionCount);
 
   const results: ParsedQuestion[] = [];
   const errors: string[] = [];
@@ -106,12 +132,10 @@ export async function generateQuizQuestions(
 
   // The LLM calls run in parallel (at most CHUNK_CONCURRENCY at a time) —
   // one after another, two ~60 s calls made a document quiz take over two
-  // minutes. The replies are then reviewed in chunk order, so each chunk is
-  // still checked against the questions every earlier chunk kept.
+  // minutes. The replies are then reviewed in document order, so each part
+  // is still checked against the questions every earlier part kept.
   let finished = 0;
-  const replies = await mapWithConcurrency(chunks, CHUNK_CONCURRENCY, async (chunk, i) => {
-    const count = perChunkCounts[i];
-    if (count <= 0) return null;
+  const replies = await mapWithConcurrency(tasks, CHUNK_CONCURRENCY, async ({ chunk, count }) => {
     const systemPrompt = `${renderPrompt(template, {
       n: String(count),
       allowedTypes: allowedTypesCsv,
@@ -131,16 +155,15 @@ export async function generateQuizQuestions(
       return { error } as const;
     } finally {
       finished += 1;
-      onProgress?.(finished, chunks.length);
+      onProgress?.(finished, tasks.length);
     }
   });
 
   replies.forEach((reply, i) => {
-    if (!reply) return;
     try {
       if ("error" in reply) throw reply.error;
       const reviewed = reviewGenerated(parseQuestionArray(reply.output), {
-        sources: [chunks[i].text],
+        sources: [tasks[i].chunk.text],
         avoid: results.map((q) => q.question),
         allowedTypes,
       });
@@ -148,7 +171,7 @@ export async function generateQuizQuestions(
       dropped = addDrops(dropped, reviewed.dropped);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Chunk ${i + 1}/${chunks.length}: ${msg}`);
+      errors.push(`Part ${i + 1}/${tasks.length}: ${msg}`);
       // Auth errors are non-retryable — fail the whole job if we hit one
       if (/401|403|invalid api key|authentication/i.test(msg)) {
         throw err;
@@ -158,7 +181,7 @@ export async function generateQuizQuestions(
 
   if (results.length === 0) {
     throw new Error(
-      `Quiz generation failed for every chunk:\n${errors.join("\n")}`,
+      `Quiz generation failed for every part:\n${errors.join("\n")}`,
     );
   }
 

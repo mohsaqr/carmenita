@@ -8,6 +8,7 @@ import {
 } from "@/lib/settings-store";
 import { isScoringMethod, SCORING_SETTING_KEY } from "@/lib/scoring";
 import { rescoreAttempts } from "@/lib/rescore";
+import { withLog } from "@/lib/request-log";
 
 /**
  * /api/settings/[key] — one per-user setting.
@@ -18,7 +19,10 @@ import { rescoreAttempts } from "@/lib/rescore";
 
 type Ctx = { params: Promise<{ key: string }> };
 
-async function resolve(req: NextRequest, ctx: Ctx) {
+async function resolve(
+  req: NextRequest,
+  ctx: Ctx,
+): Promise<{ error: NextResponse } | { userId: string; key: string }> {
   const user = getUserFromRequest(req);
   if (!user) {
     return { error: NextResponse.json({ error: "Not signed in" }, { status: 401 }) };
@@ -30,13 +34,13 @@ async function resolve(req: NextRequest, ctx: Ctx) {
   return { userId: user.id, key };
 }
 
-export async function GET(req: NextRequest, ctx: Ctx) {
+async function handleGET(req: NextRequest, ctx: Ctx) {
   const r = await resolve(req, ctx);
   if ("error" in r) return r.error;
   return NextResponse.json({ value: getSetting(r.userId, r.key) });
 }
 
-export async function PUT(req: NextRequest, ctx: Ctx) {
+async function handlePUT(req: NextRequest, ctx: Ctx) {
   const r = await resolve(req, ctx);
   if ("error" in r) return r.error;
   let body: unknown;
@@ -64,7 +68,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(req: NextRequest, ctx: Ctx) {
+async function handleDELETE(req: NextRequest, ctx: Ctx) {
   const r = await resolve(req, ctx);
   if ("error" in r) return r.error;
   deleteSetting(r.userId, r.key);
@@ -73,3 +77,7 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
   }
   return NextResponse.json({ ok: true });
 }
+
+export const GET = withLog(handleGET);
+export const PUT = withLog(handlePUT);
+export const DELETE = withLog(handleDELETE);

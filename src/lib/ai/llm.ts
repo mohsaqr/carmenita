@@ -1,4 +1,5 @@
 import type { ProviderConfig } from "@/types";
+import { logLine } from "@/lib/request-log";
 
 /**
  * Carmenita's LLM transport — a port of CarmNote's `transform-core.ts`
@@ -334,14 +335,14 @@ function finalError(error: unknown): LLMError {
  * Never the key, the prompt or the reply.
  */
 function logCall(settings: LLMSettings, latencyMs: number, error?: unknown): void {
-  const what = `[llm] ${settings.provider} ${settings.model} ${latencyMs}ms`;
+  const lead = `${settings.provider} ${settings.model} ${latencyMs}ms`;
   if (error === undefined) {
-    console.info(`${what} ok`);
+    logLine("llm", {}, "info", `${lead} ok`);
     return;
   }
   const status = (error as { status?: number })?.status;
   const message = String((error as Error)?.message ?? error).slice(0, 300);
-  console.warn(`${what} failed${status ? ` HTTP ${status}` : ""}: ${message}`);
+  logLine("llm", { error: message }, "warn", `${lead} failed${status ? ` HTTP ${status}` : ""}`);
 }
 
 async function callOnce(settings: LLMSettings, systemPrompt: string, userContent: string, signal: AbortSignal): Promise<string> {

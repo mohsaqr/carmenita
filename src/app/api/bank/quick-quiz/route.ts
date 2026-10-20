@@ -6,6 +6,7 @@ import { questions, quizzes, quizQuestions } from "@/db/schema";
 import { QuickQuizSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
 import { notArchivedQuestion } from "@/lib/question-sets";
+import { withLog } from "@/lib/request-log";
 
 /**
  * POST /api/bank/quick-quiz
@@ -27,7 +28,7 @@ import { notArchivedQuestion } from "@/lib/question-sets";
  * No LLM call — this is pure bank assembly. The generated quiz has
  * provider="bank", model="bank", documentId=null.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -195,3 +196,5 @@ function buildDefaultTitle(filters: {
   if (filters.bloomLevel) parts.push(`[${filters.bloomLevel}]`);
   return parts.join(" ");
 }
+
+export const POST = withLog(handlePOST);

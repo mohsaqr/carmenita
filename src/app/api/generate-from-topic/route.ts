@@ -4,6 +4,7 @@ import { generateQuestionsFromTopic } from "@/lib/llm-topic";
 import { appendQuestionsToQuiz, insertQuizAndQuestions } from "@/lib/db-helpers";
 import { resolvePrompt } from "@/lib/settings-store";
 import { requireUser } from "@/lib/auth";
+import { noteLog, withLog } from "@/lib/request-log";
 
 /**
  * POST /api/generate-from-topic
@@ -38,7 +39,7 @@ import { requireUser } from "@/lib/auth";
  * directly: one LLM call of ≤ TOPIC_BATCH_SIZE questions fits within the
  * tunnel's ~100 s request limit.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = requireUser(req);
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
@@ -75,6 +76,13 @@ export async function POST(req: NextRequest) {
     appendToQuizId,
     avoid,
   } = parsed.data;
+
+  noteLog({
+    topic: topic.slice(0, 80),
+    questions: batchCount ?? settings.questionCount,
+    append: appendToQuizId ? true : undefined,
+    model: `${provider.providerType}/${provider.defaultModel}`,
+  });
 
   let generated;
   try {
@@ -144,3 +152,5 @@ export async function POST(req: NextRequest) {
     dropped,
   });
 }
+
+export const POST = withLog(handlePOST);

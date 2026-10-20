@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_QUESTIONS } from "@/lib/topic-batches";
 
 /**
  * Zod schemas for every API route request body. Route handlers parse
@@ -31,7 +32,7 @@ export const ProviderConfigSchema = z.object({
 });
 
 export const QuizSettingsSchema = z.object({
-  questionCount: z.number().int().min(1).max(50),
+  questionCount: z.number().int().min(1).max(MAX_QUESTIONS),
   allowedTypes: z
     .array(z.enum(["mcq-single", "mcq-multi", "true-false"]))
     .min(1),
