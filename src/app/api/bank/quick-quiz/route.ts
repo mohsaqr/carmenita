@@ -84,7 +84,7 @@ async function handlePOST(req: NextRequest) {
     pool = existing.map((r) => r.id);
   } else {
     // Filter mode never draws from archived sets (explicit candidateIds still can).
-    const conditions = [eq(questions.userId, userId), notArchivedQuestion(userId)];
+    const conditions = [eq(questions.userId, userId), notArchivedQuestion()];
     if (subject) conditions.push(eq(questions.subject, subject));
     if (lesson) conditions.push(eq(questions.lesson, lesson));
     if (topic) conditions.push(eq(questions.topic, topic));

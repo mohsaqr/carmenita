@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray, like } from "drizzle-orm";
 import { db } from "@/db/client";
 import { questions } from "@/db/schema";
 import { serializeGift } from "@/lib/formats/gift";
@@ -8,6 +7,7 @@ import { serializeMarkdown } from "@/lib/formats/markdown";
 import type { PortableQuestion } from "@/lib/formats/types";
 import { requireUser } from "@/lib/auth";
 import { withLog } from "@/lib/request-log";
+import { bankQuestionWhere } from "@/lib/bank-filters";
 
 /**
  * GET /api/bank/export?format=gift|aiken|markdown&[topic=]&[difficulty=]&[bloomLevel=]&[sourceType=]&[ids=]
@@ -35,45 +35,8 @@ async function handleGET(req: NextRequest) {
   }
 
   const topic = sp.get("topic");
-  const subject = sp.get("subject");
-  const lesson = sp.get("lesson");
-  const tag = sp.get("tag");
-  const difficulty = sp.get("difficulty") as "easy" | "medium" | "hard" | null;
-  const bloomLevel = sp.get("bloomLevel") as
-    | "remember"
-    | "understand"
-    | "apply"
-    | "analyze"
-    | "evaluate"
-    | "create"
-    | null;
-  const sourceType = sp.get("sourceType") as
-    | "document"
-    | "gift-import"
-    | "aiken-import"
-    | "markdown-import"
-    | "manual"
-    | "variation"
-    | null;
-  const idsCsv = sp.get("ids");
-
-  // Private bank: export only the signed-in user's questions.
-  const conditions = [eq(questions.userId, userId)];
-  if (topic) conditions.push(eq(questions.topic, topic));
-  if (subject) conditions.push(eq(questions.subject, subject));
-  if (lesson) conditions.push(eq(questions.lesson, lesson));
-  if (tag) {
-    const escaped = tag.replace(/"/g, '\\"');
-    conditions.push(like(questions.tags, `%"${escaped}"%`));
-  }
-  if (difficulty) conditions.push(eq(questions.difficulty, difficulty));
-  if (bloomLevel) conditions.push(eq(questions.bloomLevel, bloomLevel));
-  if (sourceType) conditions.push(eq(questions.sourceType, sourceType));
-  if (idsCsv) {
-    const ids = idsCsv.split(",").map((s) => s.trim()).filter(Boolean);
-    if (ids.length > 0) conditions.push(inArray(questions.id, ids));
-  }
-  const where = and(...conditions);
+  // Same selection as the bank list (archived sets only when named).
+  const where = bankQuestionWhere(userId, sp);
 
   const rows = db.select().from(questions).where(where).all();
 

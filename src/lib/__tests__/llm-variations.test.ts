@@ -35,6 +35,7 @@ const sampleQuestion: Question = {
   notes: null,
   createdAt: "2026-04-08T00:00:00Z",
   userId: null,
+  setArchived: false,
 };
 
 describe("buildVariationPrompt", () => {

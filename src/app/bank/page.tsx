@@ -434,6 +434,10 @@ function BankPageInner() {
     if (selected.size > 0) {
       params.set("ids", Array.from(selected).join(","));
     } else {
+      // Export what the list shows: the open set or folder, never the
+      // whole bank including archived sets.
+      if (scope.kind === "set") params.set("setId", scope.id);
+      if (scope.kind === "folder") params.set("folder", scope.folder);
       if (filter.topic) params.set("topic", filter.topic);
       if (filter.subject !== "any") params.set("subject", filter.subject);
       if (filter.lesson !== "any") params.set("lesson", filter.lesson);

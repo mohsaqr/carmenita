@@ -96,6 +96,9 @@ export const questionSets = sqliteTable(
     // Archived sets are hidden from the bank list, taxonomy filters and
     // quick quizzes, but keep all their questions and can be restored.
     archived: integer("archived", { mode: "boolean" }).notNull().default(false),
+    // Number of questions in the set, kept by SQLite triggers on
+    // `questions` (migration 0011), so the Sets panel never counts rows.
+    questionCount: integer("question_count").notNull().default(0),
   },
   (t) => ({
     byFolder: index("idx_question_sets_folder").on(t.folder),
@@ -195,6 +198,13 @@ export const questions = sqliteTable(
     }),
     createdAt: text("created_at").notNull(),
     userId: text("user_id"),
+    // Copy of the owning set's `archived` flag, kept in step by SQLite
+    // triggers (migration 0012) on every insert, move and set archive /
+    // restore — app code never writes it. Bank listings
+    // filter on it through idx_questions_user_live, so a large archived
+    // collection is never read (a NOT IN over question_sets had to visit
+    // every one of the user's rows: 2 ms → 60+ ms with 189k archived).
+    setArchived: integer("set_archived", { mode: "boolean" }).notNull().default(false),
   },
   (t) => ({
     byTopic: index("idx_questions_topic").on(t.topic),
@@ -206,7 +216,8 @@ export const questions = sqliteTable(
     bySourceDoc: index("idx_questions_source_doc").on(t.sourceDocumentId),
     byParent: index("idx_questions_parent").on(t.parentQuestionId),
     bySet: index("idx_questions_set_id").on(t.setId),
-    byUser: index("idx_questions_user_id").on(t.userId),
+    // (No separate user_id index: idx_questions_user_live leads with it.)
+    byUserLive: index("idx_questions_user_live").on(t.userId, t.setArchived, t.createdAt),
   }),
 );
 
@@ -230,6 +241,9 @@ export const quizQuestions = sqliteTable(
   (t) => ({
     pk: primaryKey({ columns: [t.quizId, t.questionId] }),
     byQuizIdx: index("idx_quiz_questions_quiz_idx").on(t.quizId, t.idx),
+    // Deleting a question checks its quiz links; the PK leads with quiz_id,
+    // so without this every deleted question scanned the whole table.
+    byQuestion: index("idx_quiz_questions_question").on(t.questionId),
   }),
 );
 
@@ -284,6 +298,8 @@ export const answers = sqliteTable(
   (t) => ({
     pk: primaryKey({ columns: [t.attemptId, t.questionId] }),
     byAttempt: index("idx_answers_attempt_id").on(t.attemptId),
+    // Same as quiz_questions: question deletes cascade through here.
+    byQuestion: index("idx_answers_question").on(t.questionId),
   }),
 );
 

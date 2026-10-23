@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, like } from "drizzle-orm";
+import { asc, desc } from "drizzle-orm";
 import { db } from "@/db/client";
-import { questionSets, questions } from "@/db/schema";
+import { questions } from "@/db/schema";
 import { CreateQuestionSchema } from "@/lib/validation";
 import { requireUser } from "@/lib/auth";
-import { notArchivedQuestion } from "@/lib/question-sets";
+import { bankQuestionWhere } from "@/lib/bank-filters";
 import { withLog } from "@/lib/request-log";
 
 /**
@@ -31,82 +31,15 @@ async function handleGET(req: NextRequest) {
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
   const sp = req.nextUrl.searchParams;
-  const topic = sp.get("topic");
-  const subject = sp.get("subject");
-  const lesson = sp.get("lesson");
-  const tag = sp.get("tag");
-  const difficulty = sp.get("difficulty") as
-    | "easy"
-    | "medium"
-    | "hard"
-    | null;
-  const bloomLevel = sp.get("bloomLevel") as
-    | "remember"
-    | "understand"
-    | "apply"
-    | "analyze"
-    | "evaluate"
-    | "create"
-    | null;
-  const sourceType = sp.get("sourceType") as
-    | "document"
-    | "gift-import"
-    | "aiken-import"
-    | "markdown-import"
-    | "manual"
-    | "variation"
-    | null;
-  const idsCsv = sp.get("ids");
-  const setId = sp.get("setId");
-  const folder = sp.get("folder");
   const limit = Math.min(parseInt(sp.get("limit") || "500", 10) || 500, 2000);
-
-  // Private bank: only the signed-in user's questions.
-  const conditions = [eq(questions.userId, userId)];
-  if (topic) conditions.push(eq(questions.topic, topic));
-  if (subject) conditions.push(eq(questions.subject, subject));
-  if (lesson) conditions.push(eq(questions.lesson, lesson));
-  // Tags are stored as a JSON string like ["a","b","c"]. SQLite doesn't
-  // have a native JSON array query, so we do a LIKE match on the quoted
-  // tag literal. Good enough for the expected data volumes; indexable
-  // via FTS later if needed.
-  if (tag) {
-    const escaped = tag.replace(/"/g, '\\"');
-    conditions.push(like(questions.tags, `%"${escaped}"%`));
-  }
-  if (difficulty) conditions.push(eq(questions.difficulty, difficulty));
-  if (bloomLevel) conditions.push(eq(questions.bloomLevel, bloomLevel));
-  if (sourceType) conditions.push(eq(questions.sourceType, sourceType));
-  if (setId) conditions.push(eq(questions.setId, setId));
-  if (folder) {
-    conditions.push(
-      inArray(
-        questions.setId,
-        db
-          .select({ id: questionSets.id })
-          .from(questionSets)
-          .where(and(eq(questionSets.folder, folder), eq(questionSets.userId, userId))),
-      ),
-    );
-  }
-  if (idsCsv) {
-    const ids = idsCsv.split(",").map((s) => s.trim()).filter(Boolean);
-    if (ids.length > 0) conditions.push(inArray(questions.id, ids));
-  }
-  // De-crowd: archived sets drop out of the general listing. Asking for
-  // one set (or specific ids) still shows them, so an archived set can
-  // be opened and restored.
-  if (!setId && !idsCsv && sp.get("includeArchived") !== "1") {
-    conditions.push(notArchivedQuestion(userId));
-  }
-
-  const where = and(...conditions);
+  const where = bankQuestionWhere(userId, sp);
 
   const rows = db
     .select()
     .from(questions)
     .where(where)
-    .orderBy(desc(questions.createdAt))
+    // id breaks created_at ties (imports share timestamps), so pages are stable.
+    .orderBy(desc(questions.createdAt), asc(questions.id))
     .limit(limit)
     .all();
 

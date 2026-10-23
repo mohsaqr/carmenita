@@ -10,6 +10,29 @@ import type {
 } from "@/types";
 
 /**
+ * Rows per INSERT statement for bulk question writes. Drizzle binds every
+ * column of every row as a parameter and SQLite allows at most 32,766 per
+ * statement, so one statement for a large import or set copy (~1,400+
+ * questions at 23 columns) failed with "too many SQL variables".
+ */
+export const QUESTION_INSERT_CHUNK = 500;
+
+type QuestionInsertExecutor = Pick<typeof db, "insert">;
+
+/**
+ * Insert question rows in chunks of QUESTION_INSERT_CHUNK. Call it inside
+ * a transaction (pass the `tx`) when the rows must land all-or-nothing.
+ */
+export function insertQuestionRows(
+  executor: QuestionInsertExecutor,
+  rows: (typeof questions.$inferInsert)[],
+): void {
+  Array.from({ length: Math.ceil(rows.length / QUESTION_INSERT_CHUNK) }, (_, i) =>
+    rows.slice(i * QUESTION_INSERT_CHUNK, (i + 1) * QUESTION_INSERT_CHUNK),
+  ).forEach((chunk) => executor.insert(questions).values(chunk).run());
+}
+
+/**
  * Shared "assemble a quiz from a batch of generated questions" helper.
  *
  * Runs in a single SQLite transaction:

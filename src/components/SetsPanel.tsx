@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { SetNameFields, type SetSummary } from "@/components/SetNameFields";
+import { groupSetsByFolder } from "@/lib/set-groups";
 
 /** What the bank is currently narrowed to. */
 export type SetScope =
@@ -74,6 +75,9 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
   const [recipient, setRecipient] = useState("");
   const [sendBusy, setSendBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  // Archived folders open one at a time on demand, so a large archived
+  // collection (e.g. a benchmark bank) stays a single line per folder.
+  const [openArchivedFolders, setOpenArchivedFolders] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -94,8 +98,17 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
   // "Archived" section below, where they can be opened or restored.
   const liveSets = sets.filter((s) => !s.archived);
   const archivedSets = sets.filter((s) => s.archived);
-  const groups = new Map<string | null, SetSummary[]>();
-  liveSets.forEach((s) => groups.set(s.folder, [...(groups.get(s.folder) ?? []), s]));
+  const groups = groupSetsByFolder(liveSets);
+  const archivedGroups = groupSetsByFolder(archivedSets);
+
+  function toggleArchivedFolder(folder: string) {
+    setOpenArchivedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folder)) next.delete(folder);
+      else next.add(folder);
+      return next;
+    });
+  }
 
   function openEdit(s: SetSummary) {
     setEditing(s);
@@ -153,38 +166,54 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
     }
   }
 
-  async function patchArchived(ids: string[], archived: boolean): Promise<void> {
-    const results = await Promise.all(
+  /**
+   * Archive or restore each set. Settles every request (a folder can hold
+   * many sets) and returns the ids that did change, so a partial failure
+   * is reported and undoable instead of being shown as a total failure.
+   */
+  async function patchArchived(ids: string[], archived: boolean): Promise<{ done: string[]; failed: number }> {
+    const results = await Promise.allSettled(
       ids.map((id) =>
         fetch(`/api/bank/sets/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ archived }),
+        }).then((res) => {
+          if (!res.ok) throw new Error(`${res.status}`);
+          return id;
         }),
       ),
     );
-    const failed = results.find((r) => !r.ok);
-    if (failed) throw new Error(`${archived ? "Archive" : "Restore"} failed (${failed.status})`);
+    const done = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    return { done, failed: ids.length - done.length };
   }
 
   async function handleArchive(targets: SetSummary[], archived: boolean, label: string) {
     const ids = targets.map((t) => t.id);
-    try {
-      await patchArchived(ids, archived);
-      if (archived && scope.kind === "set" && ids.includes(scope.id)) onScopeChange({ kind: "all" });
-      onChanged();
-      toast.success(archived ? `Archived ${label}` : `Restored ${label}`, {
-        action: {
-          label: "Undo",
-          onClick: () => {
-            patchArchived(ids, !archived)
-              .then(() => onChanged())
-              .catch((err) => toast.error(err instanceof Error ? err.message : "Undo failed"));
-          },
-        },
+    const verb = archived ? "Archive" : "Restore";
+    const { done, failed } = await patchArchived(ids, archived);
+    // Always reload: some sets may have changed even when others failed.
+    if (archived && scope.kind === "set" && done.includes(scope.id)) onScopeChange({ kind: "all" });
+    onChanged();
+    if (done.length === 0) {
+      toast.error(`${verb} failed for ${label}. Nothing was changed.`);
+      return;
+    }
+    const undo = {
+      label: "Undo",
+      onClick: () => {
+        void patchArchived(done, !archived).then((r) => {
+          onChanged();
+          if (r.failed) toast.error(`Undo failed for ${r.failed} of ${done.length} sets`);
+        });
+      },
+    };
+    if (failed > 0) {
+      toast.error(`${verb}d ${done.length} of ${ids.length} sets in ${label}; ${failed} failed. Try again for the rest.`, {
+        action: undo,
       });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update the archive");
+    } else {
+      toast.success(archived ? `Archived ${label}` : `Restored ${label}`, { action: undo });
     }
   }
 
@@ -297,7 +326,7 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
             No sets yet. Imports you name will appear here.
           </p>
         )}
-        {[...groups.entries()].map(([folder, folderSets]) => (
+        {groups.map(({ folder, sets: folderSets, questionCount }) => (
           <div key={folder ?? "__none__"} className="space-y-0.5">
             {folder !== null ? (
               <div className="flex items-center">
@@ -312,9 +341,7 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
                     <Folder className="h-4 w-4 text-muted-foreground" />
                   )}
                   {folder}
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {folderSets.reduce((n, s) => n + s.questionCount, 0)}
-                  </span>
+                  <span className="ml-auto text-xs text-muted-foreground">{questionCount}</span>
                 </button>
                 <Button
                   variant="ghost"
@@ -328,7 +355,7 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
                 </Button>
               </div>
             ) : (
-              groups.size > 1 && (
+              groups.length > 1 && (
                 <p className="px-2 pt-2 text-xs uppercase tracking-wide text-muted-foreground">No folder</p>
               )
             )}
@@ -350,7 +377,44 @@ export function SetsPanel({ sets, scope, onScopeChange, onChanged }: SetsPanelPr
                 {archivedSets.length} {archivedSets.length === 1 ? "set" : "sets"}
               </span>
             </button>
-            {showArchived && archivedSets.map((s) => renderSetRow(s, true))}
+            {showArchived &&
+              archivedGroups.map(({ folder, sets: folderSets, questionCount }) =>
+                folder === null ? (
+                  <Fragment key="__none__">{folderSets.map((s) => renderSetRow(s, true))}</Fragment>
+                ) : (
+                  <div key={folder} className="space-y-0.5 pl-5">
+                    <div className="flex items-center opacity-70">
+                      <button
+                        type="button"
+                        className={rowClass(false)}
+                        onClick={() => toggleArchivedFolder(folder)}
+                        aria-expanded={openArchivedFolders.has(folder)}
+                      >
+                        {openArchivedFolders.has(folder) ? (
+                          <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <Folder className="h-4 w-4 text-muted-foreground" />
+                        )}
+                        <span className="truncate">{folder}</span>
+                        <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                          {folderSets.length} {folderSets.length === 1 ? "set" : "sets"} · {questionCount}
+                        </span>
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Restore all ${folderSets.length} sets in ${folder}`}
+                        title={`Restore all ${folderSets.length} sets in this folder`}
+                        onClick={() => void handleArchive(folderSets, false, `${folderSets.length} sets in "${folder}"`)}
+                      >
+                        <ArchiveRestore className="h-4 w-4" />
+                        Restore
+                      </Button>
+                    </div>
+                    {openArchivedFolders.has(folder) && folderSets.map((s) => renderSetRow(s, true))}
+                  </div>
+                ),
+              )}
           </div>
         )}
       </CardContent>

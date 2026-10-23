@@ -78,6 +78,20 @@
       "when": 1791744658909,
       "tag": "0010_archive_sets",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1792782270160,
+      "tag": "0011_set_archive_speed",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1792783388961,
+      "tag": "0012_archive_robustness",
+      "breakpoints": true
     }
   ]
 }

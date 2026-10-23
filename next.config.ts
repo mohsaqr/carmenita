@@ -59,7 +59,9 @@ const nextConfig: NextConfig = {
   // The server reads the DB from CARMENITA_DB at runtime, never from the
   // bundle, so keep every database file out of the build output.
   outputFileTracingExcludes: {
-    "*": ["./carmenita.db*", "./public/carmenita.db", "./out/**", "./seed/**"],
+    // ./tmp holds local scratch data (e.g. the 240 MB medical bank DB and
+    // DB backups); the tracer copied it into .next/standalone (2026-10-23).
+    "*": ["./carmenita.db*", "./public/carmenita.db", "./out/**", "./seed/**", "./tmp/**"],
   },
   // pdfjs imports its worker at runtime by a computed path, so the file
   // tracer never sees it and .next/standalone shipped without it: every

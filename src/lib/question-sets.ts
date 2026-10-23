@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { questionSets, questions } from "@/db/schema";
+import { insertQuestionRows } from "@/lib/db-helpers";
 
 /**
  * Question sets: named batches of questions, optionally grouped into
@@ -41,12 +42,12 @@ export function listSets(userId: string): SetSummary[] {
       receivedFrom: questionSets.receivedFrom,
       createdAt: questionSets.createdAt,
       archived: questionSets.archived,
-      questionCount: count(questions.id),
+      // Kept by triggers (migration 0011); counting rows here read every
+      // question of every set, archived ones included, on each bank load.
+      questionCount: questionSets.questionCount,
     })
     .from(questionSets)
-    .leftJoin(questions, eq(questions.setId, questionSets.id))
     .where(ownedBy(userId))
-    .groupBy(questionSets.id)
     // Folderless sets last; then alphabetical folder, then set name.
     .orderBy(
       sql`${questionSets.folder} IS NULL`,
@@ -58,14 +59,25 @@ export function listSets(userId: string): SetSummary[] {
 }
 
 /**
- * SQL condition for "this question is not in one of the user's archived
- * sets" (questions with no set always pass). Used by every bank listing
- * that should de-crowd archived material.
+ * SQL condition for "this question is not in an archived set" (questions
+ * with no set always pass). Used by every bank listing that should
+ * de-crowd archived material. Reads the per-question copy of the flag
+ * (kept by triggers, migration 0012), so with `user_id = ?` it is one
+ * index range (idx_questions_user_live).
  */
-export function notArchivedQuestion(userId: string) {
-  return sql`(${questions.setId} IS NULL OR ${questions.setId} NOT IN (
-    SELECT ${questionSets.id} FROM ${questionSets}
-    WHERE ${questionSets.archived} = 1 AND ${questionSets.userId} = ${userId}))`;
+export function notArchivedQuestion() {
+  return eq(questions.setArchived, false);
+}
+
+/**
+ * `questions.user_id = ?` written so SQLite does NOT use it to pick an index
+ * (unary +). For queries already narrowed to one set: without it the planner
+ * walks the user's whole bank through idx_questions_user_live (777 ms for
+ * one 500-row page with 189k archived questions) instead of the set index
+ * (11 ms). Ownership stays enforced.
+ */
+export function questionOwnedBy(userId: string) {
+  return sql`+${questions.userId} = ${userId}`;
 }
 
 /** True when `setId` exists and belongs to `userId`. */
@@ -77,9 +89,9 @@ export function ownsSet(userId: string, setId: string): boolean {
     .get();
 }
 
-function findSet(userId: string, name: string, folder: string | null): string | null {
+function findSet(userId: string, name: string, folder: string | null): { id: string; archived: boolean } | null {
   const row = db
-    .select({ id: questionSets.id })
+    .select({ id: questionSets.id, archived: questionSets.archived })
     .from(questionSets)
     .where(
       and(
@@ -89,7 +101,7 @@ function findSet(userId: string, name: string, folder: string | null): string | 
       ),
     )
     .get();
-  return row?.id ?? null;
+  return row ?? null;
 }
 
 /**
@@ -106,7 +118,7 @@ export function findOrCreateSet(
   if (!trimmed) throw new Error("Set name must not be empty");
   const f = normalizeFolder(folder);
   const existing = findSet(userId, trimmed, f);
-  if (existing) return { id: existing, created: false };
+  if (existing) return { id: existing.id, created: false };
   const id = randomUUID();
   db.insert(questionSets)
     .values({ id, name: trimmed, folder: f, createdAt: new Date().toISOString(), userId })
@@ -129,14 +141,17 @@ export function updateSet(
   if (patch.folder !== undefined) set.folder = normalizeFolder(patch.folder);
   if (patch.archived !== undefined) set.archived = patch.archived;
   if (Object.keys(set).length > 0) {
-    db.update(questionSets).set(set).where(and(eq(questionSets.id, id), ownedBy(userId))).run();
-    // Keep the per-question label in step with the set name.
-    if (set.name) {
-      db.update(questions)
-        .set({ sourceLabel: set.name })
-        .where(and(eq(questions.setId, id), eq(questions.userId, userId)))
-        .run();
-    }
+    // The questions' archive flag follows by trigger (migration 0012).
+    db.transaction((tx) => {
+      tx.update(questionSets).set(set).where(and(eq(questionSets.id, id), ownedBy(userId))).run();
+      // Keep the per-question label in step with the set name.
+      if (set.name) {
+        tx.update(questions)
+          .set({ sourceLabel: set.name })
+          .where(and(eq(questions.setId, id), questionOwnedBy(userId)))
+          .run();
+      }
+    });
   }
   return listSets(userId).find((s) => s.id === id) ?? null;
 }
@@ -222,26 +237,24 @@ export function sendSetCopy(
     const rows = tx
       .select()
       .from(questions)
-      .where(and(eq(questions.setId, setId), eq(questions.userId, fromUser.id)))
+      .where(and(eq(questions.setId, setId), questionOwnedBy(fromUser.id)))
       .all();
     const idMap = new Map(rows.map((q) => [q.id, randomUUID()]));
-    if (rows.length > 0) {
-      tx.insert(questions)
-        .values(
-          rows.map((q) => ({
-            ...q,
-            id: idMap.get(q.id)!,
-            setId: newSetId,
-            userId: toUserId,
-            sourceLabel: name,
-            notes: null,
-            // The source document belongs to the sender; don't point at it.
-            sourceDocumentId: null,
-            parentQuestionId: q.parentQuestionId ? (idMap.get(q.parentQuestionId) ?? null) : null,
-          })),
-        )
-        .run();
-    }
+    // The copy's archive flag follows the new (live) set by trigger.
+    insertQuestionRows(
+      tx,
+      rows.map((q) => ({
+        ...q,
+        id: idMap.get(q.id)!,
+        setId: newSetId,
+        userId: toUserId,
+        sourceLabel: name,
+        notes: null,
+        // The source document belongs to the sender; don't point at it.
+        sourceDocumentId: null,
+        parentQuestionId: q.parentQuestionId ? (idMap.get(q.parentQuestionId) ?? null) : null,
+      })),
+    );
     return { setId: newSetId, name, questionsCopied: rows.length };
   });
 }

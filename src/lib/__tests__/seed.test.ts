@@ -69,6 +69,53 @@ describe("scripts/make-seed.mjs", () => {
     expect(fs.existsSync(`${out}.tmp`)).toBe(false);
   });
 
+  it("leaves archived sets and their questions out of the seed", () => {
+    const src = path.join(TMP, "with-archive.db");
+    const out = path.join(TMP, "out", "archive-seed.db");
+    const live = makeSourceDb(src);
+    const now = new Date().toISOString();
+    const addSet = live.prepare("INSERT INTO question_sets (id, name, created_at, archived) VALUES (?, ?, ?, ?)");
+    const addQuestion = live.prepare(
+      `INSERT INTO questions (id, type, question, options, correct_answer, explanation, difficulty, bloom_level,
+        topic, tags, source_passage, created_at, set_id)
+       VALUES (?, 'mcq-single', ?, '["a","b"]', '0', '', 'medium', 'understand', 't', '[]', '', ?, ?)`,
+    );
+    addSet.run("live-set", "Demo", now, 0);
+    addSet.run("archived-set", "Benchmark", now, 1);
+    addQuestion.run("q-live", "Demo question?", now, "live-set");
+    addQuestion.run("q-archived", "Benchmark question?", now, "archived-set");
+    live.close();
+    const stdout = execFileSync(process.execPath, ["scripts/make-seed.mjs", src, out], { stdio: "pipe" }).toString();
+    expect(stdout).toContain("1 archived sets left out");
+    const seed = new Database(out, { readonly: true });
+    expect(seed.prepare("SELECT id FROM question_sets").all()).toEqual([{ id: "live-set" }]);
+    expect(seed.prepare("SELECT id FROM questions").all()).toEqual([{ id: "q-live" }]);
+    seed.close();
+  });
+
+  it("refuses to write a seed over 25 MB", () => {
+    const src = path.join(TMP, "huge.db");
+    const out = path.join(TMP, "out", "huge-seed.db");
+    const live = makeSourceDb(src);
+    const now = new Date().toISOString();
+    live.prepare("INSERT INTO question_sets (id, name, created_at) VALUES ('big', 'Big', ?)").run(now);
+    const addQuestion = live.prepare(
+      `INSERT INTO questions (id, type, question, options, correct_answer, explanation, difficulty, bloom_level,
+        topic, tags, source_passage, created_at, set_id)
+       VALUES (?, 'mcq-single', ?, '["a","b"]', '0', '', 'medium', 'understand', 't', '[]', '', ?, 'big')`,
+    );
+    const filler = "x".repeat(2000);
+    live.transaction(() =>
+      Array.from({ length: 14_000 }, (_, i) => addQuestion.run(`q${i}`, `${i} ${filler}`, now)),
+    )();
+    live.close();
+    expect(() => execFileSync(process.execPath, ["scripts/make-seed.mjs", src, out], { stdio: "pipe" })).toThrow(
+      /over the 25 MB limit/,
+    );
+    expect(fs.existsSync(out)).toBe(false);
+    expect(fs.existsSync(`${out}.tmp`)).toBe(false);
+  }, 60_000);
+
   it("fails loudly when the source DB is missing", () => {
     expect(() =>
       execFileSync("node", ["scripts/make-seed.mjs", path.join(TMP, "missing.db"), path.join(TMP, "x.db")], {

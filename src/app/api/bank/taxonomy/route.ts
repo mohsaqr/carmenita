@@ -19,7 +19,8 @@ async function handleGET(req: NextRequest) {
   if ("response" in auth) return auth.response;
   const userId = auth.user.id;
   // Questions in archived sets are left out so filters only offer live material.
-  const live = sql`(set_id IS NULL OR set_id NOT IN (SELECT id FROM question_sets WHERE archived = 1 AND user_id = ${userId}))`;
+  // Per-question copy of the set's flag: one index range, never reads archived rows.
+  const live = sql`set_archived = 0`;
   const subjects = db
     .all<{ subject: string }>(
       sql`SELECT DISTINCT subject FROM questions WHERE user_id = ${userId} AND ${live} AND subject IS NOT NULL AND subject != '' ORDER BY subject`,

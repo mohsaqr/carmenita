@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
-import { questions } from "@/db/schema";
 import { BankImportSchema } from "@/lib/validation";
 import { parseImport } from "@/lib/formats/parse-import";
 import type { QuestionSource } from "@/db/schema";
 import { findOrCreateSet } from "@/lib/question-sets";
+import { insertQuestionRows } from "@/lib/db-helpers";
 import { requireUser } from "@/lib/auth";
 import { noteLog, withLog } from "@/lib/request-log";
 
@@ -102,9 +102,13 @@ async function handlePOST(req: NextRequest) {
   // if the question insert succeeds too.
   const set = db.transaction(() => {
     const target = findOrCreateSet(userId, setName, folder);
-    db.insert(questions)
-      .values(rows.map((r) => ({ ...r, setId: target.id })))
-      .run();
+    // Chunked: one statement for a large import exceeds SQLite's
+    // bound-variable limit. Appending to an archived set keeps the new
+    // questions archived (trigger, migration 0012).
+    insertQuestionRows(
+      db,
+      rows.map((r) => ({ ...r, setId: target.id })),
+    );
     return target;
   });
 

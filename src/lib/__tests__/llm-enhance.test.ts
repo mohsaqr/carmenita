@@ -32,6 +32,7 @@ function makeQuestion(overrides: Partial<Question> = {}): Question {
     notes: null,
     createdAt: "2026-04-08T00:00:00Z",
     userId: null,
+    setArchived: false,
     ...overrides,
   };
 }

@@ -21,4 +21,9 @@ describe("next.config standalone tracing", () => {
   it("points at a worker file that exists", () => {
     expect(fs.existsSync(path.join(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"))).toBe(true);
   });
+
+  it("keeps databases and local scratch data out of the standalone build", () => {
+    const excludes = nextConfig.outputFileTracingExcludes?.["*"] ?? [];
+    expect(excludes).toEqual(expect.arrayContaining(["./carmenita.db*", "./seed/**", "./tmp/**"]));
+  });
 });
