@@ -46,6 +46,7 @@ export const QuizSettingsSchema = z.object({
   immediateFeedback: z.boolean(),
   purpose: z.enum(["formative", "training", "exam"]).optional(),
   style: z.enum(["standard", "board"]).optional(),
+  multiAnswerShare: z.number().min(0).max(1).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,6 +78,8 @@ export const GenerateQuizSchema = z.object({
   defaultSubject: z.string().max(200).optional(),
   defaultLesson: z.string().max(200).optional(),
   defaultTags: z.array(z.string().max(100)).max(20).optional(),
+  // The user's instructions for the questions; appended last, overriding.
+  customInstructions: z.string().max(5000).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

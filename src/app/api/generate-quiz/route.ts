@@ -14,7 +14,7 @@ import { noteLog, withLog } from "@/lib/request-log";
 /**
  * POST /api/generate-quiz
  *
- * Body: { documentId, title, settings, provider, temperature?, systemPromptOverride?, defaultSubject?, defaultLesson?, defaultTags? }
+ * Body: { documentId, title, settings, provider, temperature?, systemPromptOverride?, defaultSubject?, defaultLesson?, defaultTags?, customInstructions? }
  * Returns 202 { jobId } — poll `GET /api/generate-quiz/jobs/[jobId]` for
  * progress and, when done, { quizId, questionCount, dropped }.
  *
@@ -59,6 +59,7 @@ async function handlePOST(req: NextRequest) {
     defaultSubject,
     defaultLesson,
     defaultTags,
+    customInstructions,
   } = parsed.data;
 
   const doc = db
@@ -94,6 +95,7 @@ async function handlePOST(req: NextRequest) {
       temperature,
       defaultSubject: defaultSubject ?? null,
       defaultLesson: defaultLesson ?? null,
+      customInstructions,
       onProgress: progress,
     });
     if (parsedQuestions.length === 0) {

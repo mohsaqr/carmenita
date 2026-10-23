@@ -93,7 +93,7 @@ async function handlePOST(req: NextRequest) {
       objectives,
       customInstructions,
       count: batchCount ?? settings.questionCount,
-      allowedTypes: settings.allowedTypes,
+      multiAnswerShare: settings.multiAnswerShare,
       purpose: settings.purpose,
       style: settings.style,
       difficultyMix: settings.difficultyMix,

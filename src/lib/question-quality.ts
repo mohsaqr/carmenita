@@ -1,5 +1,6 @@
 import type { ParsedQuestion } from "@/lib/question-schema";
 import type { QuestionType } from "@/types";
+import { meetsAnswerFormat, pickToMix, type TypeCounts } from "@/lib/answer-format";
 
 /**
  * Quality gate for freshly generated questions — the rules the prompts ask
@@ -11,8 +12,9 @@ import type { QuestionType } from "@/types";
  *    learner answers from remembered wording, not understanding.
  * 2. No duplicates: within the batch, and against questions an earlier
  *    batch of the same quiz already asked.
- * 3. Only allowed types: an exam asks for single best answer only, and a
- *    model that writes a true/false item anyway does not get it saved.
+ * 3. Only allowed types, in the answer format (answer-format.ts): 5
+ *    options, one correct for single-answer, 2–4 for multi-answer; and no
+ *    more of each type than the batch asked for, so the mix holds.
  * 4. No tell-tale answer position: options are shuffled (models put the
  *    correct answer first far more often than chance) and `correctAnswer`
  *    is remapped. True/false keeps its fixed ["True", "False"] order.
@@ -30,6 +32,10 @@ export interface QualityDrops {
   duplicate: number;
   /** A question type this request did not allow. */
   wrongType: number;
+  /** Not 5 options, or a correct-answer count its type doesn't allow. */
+  wrongFormat: number;
+  /** Beyond the requested number of single- or multi-answer questions. */
+  overMix: number;
 }
 
 export interface ReviewedBatch {
@@ -44,6 +50,10 @@ export interface ReviewOptions {
   avoid?: string[];
   /** Types this request allows; absent = any. */
   allowedTypes?: QuestionType[];
+  /** Enforce the answer format (5 options, valid correct-answer count). */
+  answerFormat?: boolean;
+  /** Keep at most this many of each type (applied after the other checks). */
+  mix?: TypeCounts;
   random?: () => number;
   copiedRunWords?: number;
 }
@@ -99,12 +109,16 @@ export function reviewGenerated(questions: ParsedQuestion[], options: ReviewOpti
   const n = options.copiedRunWords ?? COPIED_RUN_WORDS;
   const runs = materialRuns((options.sources ?? []).filter((s) => s && s.trim()), n);
   const seen = new Set((options.avoid ?? []).map(questionKey));
-  const dropped: QualityDrops = { copied: 0, duplicate: 0, wrongType: 0 };
+  const dropped: QualityDrops = { copied: 0, duplicate: 0, wrongType: 0, wrongFormat: 0, overMix: 0 };
   const allowed = options.allowedTypes;
 
   const kept = questions.filter((q) => {
     if (allowed && !allowed.includes(q.type)) {
       dropped.wrongType += 1;
+      return false;
+    }
+    if (options.answerFormat && !meetsAnswerFormat(q)) {
+      dropped.wrongFormat += 1;
       return false;
     }
     const key = questionKey(q.question);
@@ -120,7 +134,9 @@ export function reviewGenerated(questions: ParsedQuestion[], options: ReviewOpti
     return true;
   });
 
-  return { questions: kept.map((q) => shuffleOptions(q, options.random)), dropped };
+  const { kept: mixed, over } = options.mix ? pickToMix(kept, options.mix) : { kept, over: 0 };
+  dropped.overMix = over;
+  return { questions: mixed.map((q) => shuffleOptions(q, options.random)), dropped };
 }
 
 /** Sum the drops of several batches. */
@@ -129,14 +145,16 @@ export function addDrops(a: QualityDrops, b: QualityDrops): QualityDrops {
     copied: a.copied + b.copied,
     duplicate: a.duplicate + b.duplicate,
     wrongType: a.wrongType + b.wrongType,
+    wrongFormat: a.wrongFormat + b.wrongFormat,
+    overMix: a.overMix + b.overMix,
   };
 }
 
-export const NO_DROPS: QualityDrops = { copied: 0, duplicate: 0, wrongType: 0 };
+export const NO_DROPS: QualityDrops = { copied: 0, duplicate: 0, wrongType: 0, wrongFormat: 0, overMix: 0 };
 
 /** Total questions left out. */
 export function dropCount(dropped: QualityDrops): number {
-  return dropped.copied + dropped.duplicate + dropped.wrongType;
+  return dropped.copied + dropped.duplicate + dropped.wrongType + dropped.wrongFormat + dropped.overMix;
 }
 
 /** One sentence for the UI, or "" when nothing was dropped. */
@@ -145,6 +163,10 @@ export function dropsMessage(dropped: QualityDrops): string {
     dropped.copied ? `${dropped.copied} that copied the supplied material word for word` : "",
     dropped.duplicate ? `${dropped.duplicate} duplicate${dropped.duplicate === 1 ? "" : "s"}` : "",
     dropped.wrongType ? `${dropped.wrongType} of a question type you did not allow` : "",
+    dropped.wrongFormat
+      ? `${dropped.wrongFormat} without 5 options or with a wrong number of correct answers`
+      : "",
+    dropped.overMix ? `${dropped.overMix} beyond the single/multiple-answer mix you set` : "",
   ].filter(Boolean);
   if (parts.length === 0) return "";
   const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;

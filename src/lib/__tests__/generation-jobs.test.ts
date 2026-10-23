@@ -66,12 +66,14 @@ const settings = {
   questionCount: 4,
   allowedTypes: ["mcq-single" as const],
   immediateFeedback: false,
+  // These stubs write single-answer items only.
+  multiAnswerShare: 0,
 };
 
 const question = (text: string) => ({
   type: "mcq-single",
   question: text,
-  options: ["First choice", "Second choice", "Third choice"],
+  options: ["First choice", "Second choice", "Third choice", "Fourth choice", "Fifth choice"],
   correctAnswer: 0,
   explanation: "Because.",
   difficulty: "medium",

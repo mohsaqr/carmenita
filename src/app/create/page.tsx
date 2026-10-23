@@ -39,7 +39,7 @@ import { toast } from "sonner";
 import { useActiveProvider } from "@/hooks/useActiveProvider";
 import { NoProviderWarning } from "@/components/NoProviderWarning";
 import { useAppStore } from "@/lib/store";
-import type { QuestionType, GenerationJobState } from "@/types";
+import type { GenerationJobState } from "@/types";
 import { batchSizes, MAX_QUESTIONS } from "@/lib/topic-batches";
 import { pollGenerationJob, readJson } from "@/lib/generation-poll";
 import { reportClientError } from "@/lib/client-errors";
@@ -52,10 +52,16 @@ import {
   QUESTION_PURPOSES,
   QUESTION_STYLES,
   STYLE_LABELS,
-  effectiveAllowedTypes,
   type QuestionPurpose,
   type QuestionStyle,
 } from "@/lib/question-purpose";
+import {
+  DEFAULT_MULTI_SHARE,
+  MAX_MULTI_CORRECT,
+  MIN_MULTI_CORRECT,
+  OPTION_COUNT,
+  generationTypes,
+} from "@/lib/answer-format";
 
 /**
  * Unified creation hub. Four paths to getting questions into the bank:
@@ -73,12 +79,6 @@ import {
  *
  * Replaces the old /upload page which only supported documents.
  */
-
-const ALL_TYPES: { value: QuestionType; label: string }[] = [
-  { value: "mcq-single", label: "MCQ (single answer)" },
-  { value: "mcq-multi", label: "MCQ (multiple answers)" },
-  { value: "true-false", label: "True / False" },
-];
 
 const LEVELS = [
   { value: "intro", label: "Introductory" },
@@ -115,10 +115,10 @@ function CreatePageInner() {
   // ── Shared settings (apply to all generation tabs) ────────────────────
   const [title, setTitle] = useState("");
   const [questionCount, setQuestionCount] = useState(10);
-  const [allowedTypes, setAllowedTypes] = useState<QuestionType[]>([
-    "mcq-single",
-    "true-false",
-  ]);
+  // Share of multiple-answer questions, in percent; the rest are single-answer.
+  const [multiPercent, setMultiPercent] = useState(Math.round(DEFAULT_MULTI_SHARE * 100));
+  // The user's instructions for the questions (every generation tab).
+  const [instructions, setInstructions] = useState("");
   const [immediateFeedback, setImmediateFeedback] = useState(true);
   const [difficultyEasy, setDifficultyEasy] = useState(0.3);
   const [difficultyMedium, setDifficultyMedium] = useState(0.5);
@@ -161,7 +161,6 @@ function CreatePageInner() {
   const [topicSubject, setTopicSubject] = useState("");
   const [topicLevel, setTopicLevel] = useState("undergrad");
   const [topicObjectives, setTopicObjectives] = useState("");
-  const [topicInstructions, setTopicInstructions] = useState("");
 
   // ── Job state ─────────────────────────────────────────────────────────
   const [job, setJob] = useState<GenerationJobState>({ status: "idle" });
@@ -169,7 +168,8 @@ function CreatePageInner() {
 
   const settingsPayload = () => ({
     questionCount,
-    allowedTypes: effectiveAllowedTypes(purpose, allowedTypes),
+    allowedTypes: generationTypes(multiPercent / 100),
+    multiAnswerShare: multiPercent / 100,
     immediateFeedback,
     purpose,
     style,
@@ -182,12 +182,6 @@ function CreatePageInner() {
 
   // ── Shared helpers ────────────────────────────────────────────────────
 
-  const toggleType = (type: QuestionType) => {
-    setAllowedTypes((prev) =>
-      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
-    );
-  };
-
   const commonGenerateBody = () => ({
     title: title || (tab === "topic" ? topicName : docInfo?.filename || "Untitled quiz"),
     settings: settingsPayload(),
@@ -196,6 +190,7 @@ function CreatePageInner() {
     defaultSubject: defaultSubject.trim() || undefined,
     defaultLesson: defaultLesson.trim() || undefined,
     defaultTags: parsedDefaultTags.length > 0 ? parsedDefaultTags : undefined,
+    customInstructions: instructions.trim() || undefined,
   });
 
   // ── Document tab handlers ─────────────────────────────────────────────
@@ -270,10 +265,6 @@ function CreatePageInner() {
 
   async function handleGenerateDocument() {
     if (!docInfo || !provider) return;
-    if (effectiveAllowedTypes(purpose, allowedTypes).length === 0) {
-      toast.error("Select at least one question type");
-      return;
-    }
     setJob({ status: "generating", filename: docInfo.filename });
     try {
       const res = await fetch("/api/generate-quiz", {
@@ -317,10 +308,6 @@ function CreatePageInner() {
       toast.error("Topic name is required");
       return;
     }
-    if (effectiveAllowedTypes(purpose, allowedTypes).length === 0) {
-      toast.error("Select at least one question type");
-      return;
-    }
     const sizes = batchSizes(questionCount);
     const label = `topic: ${topicName}`;
     const base = {
@@ -328,7 +315,6 @@ function CreatePageInner() {
       subject: topicSubject.trim() || undefined,
       level: topicLevel,
       objectives: topicObjectives.trim() || undefined,
-      customInstructions: topicInstructions.trim() || undefined,
       ...commonGenerateBody(),
     };
 
@@ -503,21 +489,6 @@ function CreatePageInner() {
                   placeholder="e.g. Students should understand how ATP is produced via oxidative phosphorylation and distinguish it from substrate-level phosphorylation."
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="topic-instructions">
-                  Custom instructions (optional)
-                </Label>
-                <Textarea
-                  id="topic-instructions"
-                  value={topicInstructions}
-                  onChange={(e) => setTopicInstructions(e.target.value)}
-                  rows={3}
-                  placeholder="Anything the questions must do, e.g. use clinical case vignettes; cover the electron transport chain and ATP synthase; avoid memorising enzyme names"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Followed in every question, ahead of the defaults.
-                </p>
-              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -616,32 +587,37 @@ function CreatePageInner() {
             </div>
 
             <div className="space-y-2">
-              <Label>Allowed question types</Label>
-              <div className="space-y-2">
-                {ALL_TYPES.map((t) => {
-                  const locked = purpose === "exam" && t.value !== "mcq-single";
-                  return (
-                    <label
-                      key={t.value}
-                      className={`flex items-center gap-2 text-sm ${locked ? "text-muted-foreground" : "cursor-pointer"}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={effectiveAllowedTypes(purpose, allowedTypes).includes(t.value)}
-                        onChange={() => toggleType(t.value)}
-                        disabled={purpose === "exam"}
-                        className="h-4 w-4"
-                      />
-                      {t.label}
-                    </label>
-                  );
-                })}
-              </div>
-              {purpose === "exam" && (
-                <p className="text-xs text-muted-foreground">
-                  Exams use single-best-answer questions only.
-                </p>
-              )}
+              <Label htmlFor="multi-percent">Multiple-answer questions (%)</Label>
+              <Input
+                id="multi-percent"
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={multiPercent}
+                onChange={(e) =>
+                  setMultiPercent(Math.min(100, Math.max(0, Math.round(Number(e.target.value) || 0))))
+                }
+                className="w-28"
+              />
+              <p className="text-xs text-muted-foreground">
+                Every question has {OPTION_COUNT} options. {multiPercent}% are multiple-answer ({MIN_MULTI_CORRECT}–
+                {MAX_MULTI_CORRECT} correct, never all {OPTION_COUNT}); {100 - multiPercent}% are single-answer (one correct).
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="instructions">Instructions for the questions (optional)</Label>
+              <Textarea
+                id="instructions"
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                rows={3}
+                placeholder="Anything the questions must do, e.g. use clinical case vignettes; focus on the mechanism of GABA-A receptors; avoid asking for drug brand names"
+              />
+              <p className="text-xs text-muted-foreground">
+                Followed in every question, ahead of the defaults. The answer format above always applies.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -741,7 +717,6 @@ function CreatePageInner() {
             disabled={
               busy ||
               !provider ||
-              effectiveAllowedTypes(purpose, allowedTypes).length === 0 ||
               (tab === "topic" ? !topicName.trim() : !docInfo)
             }
             size="lg"

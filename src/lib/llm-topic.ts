@@ -2,8 +2,9 @@ import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
 import { getPrompt, purposeStyleBlock, renderPrompt } from "@/lib/prompts";
 import { parseQuestionArray } from "@/lib/question-schema";
 import { reviewGenerated, type ReviewedBatch } from "@/lib/question-quality";
-import { effectiveAllowedTypes, type QuestionPurpose, type QuestionStyle } from "@/lib/question-purpose";
-import type { ProviderConfig, QuestionType, Difficulty } from "@/types";
+import type { QuestionPurpose, QuestionStyle } from "@/lib/question-purpose";
+import { answerFormatBlock, generationTypes, typeCounts } from "@/lib/answer-format";
+import type { ProviderConfig, Difficulty } from "@/types";
 
 /**
  * Topic-based question generation.
@@ -37,7 +38,8 @@ export interface TopicGenerationArgs {
   /** Free-text instructions from the learner; they take priority over the defaults. */
   customInstructions?: string;
   count: number;
-  allowedTypes: QuestionType[];
+  /** Share (0–1) of multiple-answer questions; absent = 0.75 (answer-format.ts). */
+  multiAnswerShare?: number;
   difficultyMix?: Partial<Record<Difficulty, number>>;
   provider: ProviderConfig;
   temperature?: number;
@@ -71,7 +73,7 @@ export function buildTopicPrompt(
     objectives,
     customInstructions,
     count,
-    allowedTypes,
+    multiAnswerShare,
     difficultyMix,
     systemPromptOverride,
     avoid = [],
@@ -91,11 +93,13 @@ export function buildTopicPrompt(
     level: level?.trim() || "undergraduate",
     objectives: objectives?.trim() || "(none specified)",
     mustInclude: customInstructions?.trim() || "(none specified)",
-    allowedTypes: effectiveAllowedTypes(purpose, allowedTypes).join(", "),
+    allowedTypes: generationTypes(multiAnswerShare).join(", "),
     difficultyMix: difficultyMixJson,
   });
 
-  const withPurpose = `${prompt}\n\n${purposeStyleBlock(purpose, style)}`;
+  const withPurpose = `${prompt}\n\n${purposeStyleBlock(purpose, style)}\n\n${answerFormatBlock(
+    typeCounts(count, multiAnswerShare),
+  )}`;
   const asked = avoid
     .map((q) => q.replace(/\s+/g, " ").trim().slice(0, AVOID_MAX_CHARS))
     .filter(Boolean)
@@ -115,12 +119,13 @@ ${customInstructionsBlock(instructions)}`;
 /**
  * The learner's custom instructions as the prompt's final, overriding
  * block. They win over the defaults above (focus, coverage, level, style,
- * wording); the JSON output shape and the allowed question types stay
- * fixed, since the app reads and checks those.
+ * wording); the JSON output shape and the answer format stay fixed, since
+ * the app reads and checks those. Used by topic AND document/lecture
+ * generation.
  */
 export function customInstructionsBlock(instructions: string): string {
   return `CUSTOM INSTRUCTIONS FROM THE LEARNER — HIGHEST PRIORITY
-Follow every one of these in every question of this batch. Where they conflict with anything above (focus, coverage, level, style, wording), these instructions win. Only the output format, the JSON fields and the allowed question types stay as specified above. They tell you what to do, not text to copy: never paste their wording into a question.
+Follow every one of these in every question of this batch. Where they conflict with anything above (focus, coverage, level, style, wording), these instructions win. Only the output format, the JSON fields and the ANSWER FORMAT (5 options; the number of single- and multiple-answer questions; how many options are correct) stay as specified above. They tell you what to do, not text to copy: never paste their wording into a question.
 """
 ${instructions}
 """`;
@@ -134,7 +139,7 @@ ${instructions}
 export async function generateQuestionsFromTopic(
   args: TopicGenerationArgs,
 ): Promise<ReviewedBatch> {
-  const { topic, count, provider, temperature, objectives, customInstructions, avoid, purpose, allowedTypes } = args;
+  const { topic, count, provider, temperature, objectives, customInstructions, avoid, multiAnswerShare } = args;
 
   if (
     !provider.apiKey &&
@@ -161,7 +166,9 @@ export async function generateQuestionsFromTopic(
   const reviewed = reviewGenerated(parseQuestionArray(raw), {
     sources: [objectives ?? "", customInstructions ?? ""],
     avoid,
-    allowedTypes: effectiveAllowedTypes(purpose, allowedTypes),
+    allowedTypes: generationTypes(multiAnswerShare),
+    answerFormat: true,
+    mix: typeCounts(count, multiAnswerShare),
   });
 
   // If we over-generated (shouldn't happen for topic mode but defensive),

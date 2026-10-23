@@ -2,7 +2,8 @@ import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
 import { getPrompt, purposeStyleBlock, renderPrompt } from "@/lib/prompts";
 import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
 import { addDrops, NO_DROPS, reviewGenerated, type QualityDrops, type ReviewedBatch } from "@/lib/question-quality";
-import { effectiveAllowedTypes } from "@/lib/question-purpose";
+import { answerFormatBlock, generationTypes, splitTypeCounts, typeCounts } from "@/lib/answer-format";
+import { customInstructionsBlock } from "@/lib/llm-topic";
 import { chunkText, distributeQuestions, type Chunk } from "@/lib/chunk";
 import { batchSizes, TOPIC_BATCH_SIZE } from "@/lib/topic-batches";
 import type { ProviderConfig, QuizSettings } from "@/types";
@@ -35,6 +36,8 @@ export interface GenerateQuizArgs {
   promptId?: string;
   systemPromptOverride?: string; // for /api/generate-quiz to forward a user-edited prompt
   temperature?: number;
+  /** The user's instructions for the questions; appended last, overriding. */
+  customInstructions?: string;
   /** Optional taxonomy hints injected into the prompt as default values. */
   defaultSubject?: string | null;
   defaultLesson?: string | null;
@@ -108,6 +111,7 @@ export async function generateQuizQuestions(
     defaultSubject,
     defaultLesson,
     onProgress,
+    customInstructions,
   } = args;
 
   if (!provider.apiKey && provider.providerType !== "ollama" && provider.providerType !== "lmstudio") {
@@ -117,7 +121,9 @@ export async function generateQuizQuestions(
   }
 
   const template = systemPromptOverride ?? getPrompt(promptId);
-  const allowedTypes = effectiveAllowedTypes(settings.purpose, settings.allowedTypes);
+  // Types and mix come from the multiple-answer share (answer-format.ts).
+  const share = settings.multiAnswerShare;
+  const allowedTypes = generationTypes(share);
   const purposeBlock = purposeStyleBlock(settings.purpose, settings.style);
   const difficultyMixJson = JSON.stringify(
     settings.difficultyMix ?? { easy: 0.3, medium: 0.5, hard: 0.2 },
@@ -125,6 +131,10 @@ export async function generateQuizQuestions(
   const allowedTypesCsv = allowedTypes.join(", ");
 
   const tasks = planGeneration(docText, settings.questionCount);
+  // Each part asks for its own exact multi/single split; together they
+  // make the quiz's mix.
+  const partMix = splitTypeCounts(tasks.map((t) => t.count), share);
+  const instructions = customInstructions?.trim();
 
   const results: ParsedQuestion[] = [];
   const errors: string[] = [];
@@ -135,15 +145,17 @@ export async function generateQuizQuestions(
   // minutes. The replies are then reviewed in document order, so each part
   // is still checked against the questions every earlier part kept.
   let finished = 0;
-  const replies = await mapWithConcurrency(tasks, CHUNK_CONCURRENCY, async ({ chunk, count }) => {
-    const systemPrompt = `${renderPrompt(template, {
+  const replies = await mapWithConcurrency(tasks, CHUNK_CONCURRENCY, async ({ chunk, count }, i) => {
+    const rendered = `${renderPrompt(template, {
       n: String(count),
       allowedTypes: allowedTypesCsv,
       difficultyMix: difficultyMixJson,
       text: chunk.text,
       defaultSubject: defaultSubject ?? "",
       defaultLesson: defaultLesson ?? "",
-    })}\n\n${purposeBlock}`;
+    })}\n\n${purposeBlock}\n\n${answerFormatBlock(partMix[i])}`;
+    // The user's instructions go last: what comes last weighs most.
+    const systemPrompt = instructions ? `${rendered}\n\n${customInstructionsBlock(instructions)}` : rendered;
     try {
       const { output } = await callLLM(
         settingsFromProvider(provider, { temperature }),
@@ -163,9 +175,11 @@ export async function generateQuizQuestions(
     try {
       if ("error" in reply) throw reply.error;
       const reviewed = reviewGenerated(parseQuestionArray(reply.output), {
-        sources: [tasks[i].chunk.text],
+        sources: [tasks[i].chunk.text, instructions ?? ""],
         avoid: results.map((q) => q.question),
         allowedTypes,
+        answerFormat: true,
+        mix: partMix[i],
       });
       results.push(...reviewed.questions);
       dropped = addDrops(dropped, reviewed.dropped);
@@ -185,6 +199,11 @@ export async function generateQuizQuestions(
     );
   }
 
-  // If we over-generated (distribution rounding), trim to the requested count
-  return { questions: results.slice(0, settings.questionCount), dropped };
+  // Each part was already trimmed to its share of the mix; this keeps the
+  // whole quiz within the requested count and mix.
+  const quizMix = typeCounts(settings.questionCount, share);
+  const multi = results.filter((q) => q.type === "mcq-multi").slice(0, quizMix.multi);
+  const single = results.filter((q) => q.type === "mcq-single").slice(0, quizMix.single);
+  const keep = new Set([...multi, ...single]);
+  return { questions: results.filter((q) => keep.has(q)), dropped };
 }

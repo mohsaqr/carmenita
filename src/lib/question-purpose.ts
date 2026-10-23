@@ -1,4 +1,4 @@
-import type { Difficulty, QuestionType } from "@/types";
+import type { Difficulty } from "@/types";
 
 /**
  * What a generated quiz is for, and how its items are written. Both are
@@ -32,15 +32,3 @@ export const PURPOSE_DIFFICULTY: Record<QuestionPurpose, Record<Difficulty, numb
   training: { easy: 0.3, medium: 0.5, hard: 0.2 },
   exam: { easy: 0.1, medium: 0.5, hard: 0.4 },
 };
-
-/**
- * The question types a request may produce. An exam is single best answer
- * only — true/false is a coin toss and multi-answer items score unevenly —
- * whatever the type checkboxes say. Enforced on the server, not just in the UI.
- */
-export function effectiveAllowedTypes(
-  purpose: QuestionPurpose | undefined,
-  allowedTypes: QuestionType[],
-): QuestionType[] {
-  return purpose === "exam" ? ["mcq-single"] : allowedTypes;
-}

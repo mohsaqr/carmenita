@@ -44,6 +44,12 @@ export interface QuizSettings {
   purpose?: "formative" | "training" | "exam";
   /** "board" = NBME/USMLE item-writing style. */
   style?: "standard" | "board";
+  /**
+   * Share (0–1) of generated questions that are multiple-answer; the rest
+   * are single-answer. Absent = DEFAULT_MULTI_SHARE (0.75). Generation
+   * derives the types from it (answer-format.ts), not from allowedTypes.
+   */
+  multiAnswerShare?: number;
 }
 
 export const quizzes = sqliteTable(

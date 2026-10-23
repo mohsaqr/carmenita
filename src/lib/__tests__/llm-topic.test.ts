@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildTopicPrompt } from "@/lib/llm-topic";
 import { purposeStyleBlock } from "@/lib/prompts";
-import type { QuestionType } from "@/types";
+import { answerFormatBlock, typeCounts } from "@/lib/answer-format";
 
 /**
  * Tests for the topic-mode prompt builder. We verify that each
@@ -12,7 +12,6 @@ import type { QuestionType } from "@/types";
 const baseArgs = {
   topic: "mitochondrial respiration",
   count: 5,
-  allowedTypes: ["mcq-single", "true-false"] as QuestionType[],
 };
 
 describe("buildTopicPrompt", () => {
@@ -85,12 +84,24 @@ describe("buildTopicPrompt", () => {
     expect(p).toContain("CUSTOM INSTRUCTIONS FROM THE LEARNER");
   });
 
-  it("embeds the allowed question types as a CSV", () => {
-    const p = buildTopicPrompt({
-      ...baseArgs,
-      allowedTypes: ["mcq-single", "mcq-multi", "true-false"],
-    });
-    expect(p).toContain("mcq-single, mcq-multi, true-false");
+  it("derives the allowed types from the multiple-answer share", () => {
+    expect(buildTopicPrompt(baseArgs)).toContain("Allowed question types for this request: mcq-multi, mcq-single.");
+    expect(buildTopicPrompt({ ...baseArgs, multiAnswerShare: 0 })).toContain(
+      "Allowed question types for this request: mcq-single.",
+    );
+    expect(buildTopicPrompt({ ...baseArgs, multiAnswerShare: 1 })).toContain(
+      "Allowed question types for this request: mcq-multi.",
+    );
+  });
+
+  it("states the answer format after the purpose and before the learner's instructions", () => {
+    const p = buildTopicPrompt({ ...baseArgs, count: 8, multiAnswerShare: 0.75, customInstructions: "Use vignettes" });
+    const format = p.indexOf("ANSWER FORMAT — REQUIRED");
+    expect(format).toBeGreaterThan(p.indexOf("PURPOSE:"));
+    expect(format).toBeLessThan(p.indexOf("CUSTOM INSTRUCTIONS FROM THE LEARNER"));
+    expect(p).toContain('Write exactly 6 "mcq-multi" and exactly 2 "mcq-single" questions');
+    expect(p).toContain("Every question has exactly 5 options.");
+    expect(p).toContain("Never make all 5 correct.");
   });
 
   it("embeds a default difficulty mix when omitted", () => {
@@ -124,7 +135,9 @@ describe("buildTopicPrompt", () => {
     });
     // The custom template replaces the default; the purpose block still
     // follows it, so Purpose/Style work with a customised prompt too.
-    expect(p).toBe(`OVERRIDE: topic is mitochondrial respiration\n\n${purposeStyleBlock()}`);
+    expect(p).toBe(
+      `OVERRIDE: topic is mitochondrial respiration\n\n${purposeStyleBlock()}\n\n${answerFormatBlock(typeCounts(baseArgs.count, undefined))}`,
+    );
     expect(p).not.toContain("expert educator");
   });
 

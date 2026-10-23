@@ -7,7 +7,6 @@ import {
   reviewGenerated,
   shuffleOptions,
 } from "@/lib/question-quality";
-import { effectiveAllowedTypes } from "@/lib/question-purpose";
 import { BOARD_STYLE_BLOCK, PROMPTS, PURPOSE_BLOCKS, purposeStyleBlock } from "@/lib/prompts";
 import { buildTopicPrompt } from "@/lib/llm-topic";
 import type { ParsedQuestion } from "@/lib/question-schema";
@@ -79,14 +78,14 @@ describe("reviewGenerated", () => {
       random: seeded(1),
     });
     expect(out.questions.map((x) => x.question)).toEqual(["Which transporter does fluoxetine block?"]);
-    expect(out.dropped).toEqual({ copied: 2, duplicate: 2, wrongType: 1 });
+    expect(out.dropped).toEqual({ copied: 2, duplicate: 2, wrongType: 1, wrongFormat: 0, overMix: 0 });
   });
 
   it("keeps everything when nothing breaks a rule", () => {
     const batch = [q(), q({ question: "What does an MAO inhibitor block?" })];
     const out = reviewGenerated(batch, { random: seeded(2) });
     expect(out.questions).toHaveLength(2);
-    expect(out.dropped).toEqual({ copied: 0, duplicate: 0, wrongType: 0 });
+    expect(out.dropped).toEqual({ copied: 0, duplicate: 0, wrongType: 0, wrongFormat: 0, overMix: 0 });
   });
 });
 
@@ -130,21 +129,25 @@ describe("shuffleOptions", () => {
 
 describe("dropsMessage", () => {
   it("names what was left out, or says nothing", () => {
-    expect(dropsMessage({ copied: 0, duplicate: 0, wrongType: 0 })).toBe("");
-    expect(dropsMessage({ copied: 2, duplicate: 1, wrongType: 0 })).toBe(
+    const none = { copied: 0, duplicate: 0, wrongType: 0, wrongFormat: 0, overMix: 0 };
+    expect(dropsMessage(none)).toBe("");
+    expect(dropsMessage({ ...none, copied: 2, duplicate: 1 })).toBe(
       "Left out 2 that copied the supplied material word for word and 1 duplicate.",
     );
-    expect(dropsMessage({ copied: 1, duplicate: 2, wrongType: 3 })).toBe(
+    expect(dropsMessage({ ...none, copied: 1, duplicate: 2, wrongType: 3 })).toBe(
       "Left out 1 that copied the supplied material word for word, 2 duplicates and 3 of a question type you did not allow.",
+    );
+    expect(dropsMessage({ ...none, wrongFormat: 2, overMix: 1 })).toBe(
+      "Left out 2 without 5 options or with a wrong number of correct answers and 1 beyond the single/multiple-answer mix you set.",
     );
   });
 });
 
 describe("purpose and style", () => {
-  it("limits an exam to single best answer, whatever the checkboxes say", () => {
-    expect(effectiveAllowedTypes("exam", ["mcq-multi", "true-false"])).toEqual(["mcq-single"]);
-    expect(effectiveAllowedTypes("training", ["mcq-multi", "true-false"])).toEqual(["mcq-multi", "true-false"]);
-    expect(effectiveAllowedTypes(undefined, ["true-false"])).toEqual(["true-false"]);
+  it("an exam no longer forces single-answer: the mix applies to every purpose", () => {
+    expect(PURPOSE_BLOCKS.exam).not.toMatch(/Single-best-answer items only/);
+    expect(BOARD_STYLE_BLOCK).toMatch(/Select all that apply/);
+    expect(BOARD_STYLE_BLOCK).toContain("Options: 5 short options");
   });
 
   it("defaults to training, standard", () => {
@@ -160,11 +163,10 @@ describe("purpose and style", () => {
     expect(BOARD_STYLE_BLOCK).toMatch(/No patient is needed/);
   });
 
-  it("an exam topic prompt offers only mcq-single and carries the exam block", () => {
-    const p = buildTopicPrompt({
-      topic: "SSRIs", count: 5, allowedTypes: ["mcq-single", "true-false"], purpose: "exam", style: "board",
-    });
-    expect(p).toContain("Allowed question types for this request: mcq-single.");
+  it("an exam topic prompt asks for the default 75/25 mix and carries the exam block", () => {
+    const p = buildTopicPrompt({ topic: "SSRIs", count: 20, purpose: "exam", style: "board" });
+    expect(p).toContain("Allowed question types for this request: mcq-multi, mcq-single.");
+    expect(p).toContain('Write exactly 15 "mcq-multi" and exactly 5 "mcq-single" questions');
     expect(p).toContain("PURPOSE: exam");
     expect(p).toContain("STYLE: board exam");
   });

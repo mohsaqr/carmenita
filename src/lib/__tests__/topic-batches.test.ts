@@ -88,11 +88,12 @@ describe("POST /api/generate-from-topic in batches", () => {
   };
   const body = {
     topic: "SSRIs", title: "SSRIs",
-    settings: { questionCount: 25, allowedTypes: ["mcq-single"], immediateFeedback: true },
+    // The stub writes single-answer items only.
+    settings: { questionCount: 25, allowedTypes: ["mcq-single"], immediateFeedback: true, multiAnswerShare: 0 },
     provider,
   };
   const question = (stem: string) => ({
-    type: "mcq-single", question: stem, options: ["A", "B", "C", "D"], correctAnswer: 0,
+    type: "mcq-single", question: stem, options: ["A", "B", "C", "D", "E"], correctAnswer: 0,
     explanation: "Because A.", difficulty: "medium", bloomLevel: "remember",
     topic: "ssris", tags: ["ssri", "pharmacology"], sourcePassage: "SSRIs block reuptake.",
   });
@@ -160,7 +161,7 @@ describe("POST /api/generate-from-topic in batches", () => {
     expect(count).toEqual({ n: mine.questionCount });
   });
 
-  it("an exam run drops a true/false item the model wrote anyway", async () => {
+  it("drops a true/false item the model wrote anyway (generation never asks for one)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => {
       const items = [
         question("Which drug selectively blocks serotonin uptake?"),
@@ -174,7 +175,7 @@ describe("POST /api/generate-from-topic in batches", () => {
     });
     const data = await res.json();
     expect(data.questionCount).toBe(1);
-    expect(data.dropped).toEqual({ copied: 0, duplicate: 0, wrongType: 1 });
+    expect(data.dropped).toEqual({ copied: 0, duplicate: 0, wrongType: 1, wrongFormat: 0, overMix: 0 });
     const types = sqlite
       .prepare("SELECT q.type FROM quiz_questions qq JOIN questions q ON q.id = qq.question_id WHERE qq.quiz_id = ?")
       .all(data.quizId);

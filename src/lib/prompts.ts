@@ -50,16 +50,16 @@ const OUTPUT_RULES = `Output rules (FOLLOW EXACTLY):
 - No markdown. No code fences. No preamble. No trailing commentary.
 - Every field required above is REQUIRED for every question. Questions missing any required field will be discarded.
 - Distractors must be plausible but unambiguously incorrect.
-- For mcq-multi questions, at least two options must be correct AND at least one must be wrong.
-- For true-false questions, the options array must be exactly ["True", "False"] and correctAnswer must be 0 (True) or 1 (False).`;
+- Every question has exactly 5 options.
+- For mcq-multi questions, 2 to 4 of the 5 options are correct AND at least one is wrong — never all five.`;
 
 // Shared "question shape" block common to all three generation prompts.
 const QUESTION_SHAPE = `Each question MUST include every one of these fields:
 
-- "type": one of "mcq-single" (exactly one correct answer), "mcq-multi" (two or more correct answers), or "true-false".
+- "type": "mcq-single" (exactly one correct answer) or "mcq-multi" (2 to 4 correct answers).
 - "question": the question text, clear and self-contained.
-- "options": an array of option strings. For "true-false" use exactly ["True", "False"]. For MCQ use 4 options (or 3 at minimum, 6 maximum).
-- "correctAnswer": for mcq-single and true-false, a 0-indexed number. For mcq-multi, an array of 0-indexed numbers (length >= 2, at least one wrong option).
+- "options": an array of exactly 5 option strings.
+- "correctAnswer": for mcq-single, a 0-indexed number. For mcq-multi, an array of 2 to 4 0-indexed numbers (at least one option stays wrong).
 - "explanation": 2–4 sentences. Say why the correct answer is correct (the mechanism or reasoning, not a restatement of the option), then why the most tempting distractor is wrong. Write for a learner who just picked that distractor.
 - "difficulty": "easy", "medium", or "hard".
 - "bloomLevel": one of "remember", "understand", "apply", "analyze", "evaluate", "create".
@@ -87,6 +87,7 @@ Make the options fair.
 - All options are the same kind of thing, similar in length, detail and grammar, so none stands out. The correct answer must not be the longest, the most precise or the only hedged one.
 - No "all of the above", "none of the above", "both A and B", or joke options.
 - Exactly one option is defensibly correct for mcq-single; an expert should not be able to argue for a second.
+- In mcq-multi, each option is a separate true-or-false judgement: clearly correct or clearly wrong on its own, never "partly true".
 
 Get the facts right. If you are not confident a claim is accurate and standard, do not build a question on it.`;
 
@@ -103,19 +104,18 @@ export const PURPOSE_BLOCKS: Record<QuestionPurpose, string> = {
 - About half at "apply" or higher.
 - Explanations: why the correct answer is right, and why the most tempting wrong option is wrong.`,
   exam: `PURPOSE: exam (high stakes). These questions must reliably separate learners who understand the topic from those who do not, and be fair to both.
-- Single-best-answer items only; do not write true-false or multiple-answer items.
 - About 70% of stems present a scenario or case that requires applying or analysing knowledge.
-- Exactly one option is unarguably best; every distractor is plausible to a learner with a specific gap, and none is a trick.
+- In single-answer items exactly one option is unarguably best; in multiple-answer items every option is unambiguously correct or wrong. Every wrong option is plausible to a learner with a specific gap, and none is a trick.
 - Test important ideas, never obscure detail.
 - Explanations are one or two sentences, for review after the exam.`,
 };
 
-export const BOARD_STYLE_BLOCK = `STYLE: board exam. Follow the NBME item-writing guidelines used for USMLE: single-best-answer items.
+export const BOARD_STYLE_BLOCK = `STYLE: board exam. Follow the NBME item-writing guidelines used for USMLE.
 - Choose the stem to fit the content:
   - Clinical content (diagnosis, management, adverse effects in patients): a clinical vignette, in this order: age and sex, setting, presenting complaint, relevant history and medications, examination findings, then test results if needed.
   - Basic science (mechanisms, pharmacology, physiology, biochemistry): an experimental or laboratory scenario, a description of data to interpret, or a mechanism question. No patient is needed; do not invent one just to have a case.
-- Lead-in: one clear question, e.g. "Which of the following is the most likely diagnosis / mechanism / drug / explanation for these findings?" It must be answerable with the options covered.
-- Options: 4–5 short options of the same kind (all diagnoses, all drugs or all mechanisms), in a logical order (alphabetical or numerical).
+- Lead-in: one clear question. Single-answer: "Which of the following is the most likely diagnosis / mechanism / drug / explanation for these findings?" — answerable with the options covered. Multiple-answer: "Which of the following are …? Select all that apply."
+- Options: 5 short options of the same kind (all diagnoses, all drugs or all mechanisms), in a logical order (alphabetical or numerical).
 - Test applying and integrating knowledge, not isolated recall of a fact.`;
 
 /** The text appended to a generation prompt for this purpose and style. */
