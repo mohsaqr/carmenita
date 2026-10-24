@@ -103,6 +103,8 @@ async function handlePOST(req: NextRequest) {
         systemPromptOverride ??
         resolvePrompt(userId, "carmenita.mcq.topic"),
       avoid,
+      // The client gone (or the tunnel's ~100 s limit hit) ends the call too.
+      signal: req.signal,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown generation error";

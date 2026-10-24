@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
+import { callLLM, OUTPUT_BUDGET, settingsFromProvider } from "@/lib/ai/llm";
 import { getPrompt, renderPrompt } from "@/lib/prompts";
 import type { ProviderConfig, Question } from "@/types";
 
@@ -68,7 +68,7 @@ export async function generateExplanation(
   const systemPrompt = buildExplanationPrompt(question, template);
 
   const { output: raw } = await callLLM(
-    settingsFromProvider(provider, { temperature }),
+    settingsFromProvider(provider, { temperature, maxTokens: OUTPUT_BUDGET.explanation }),
     systemPrompt,
     'Return the JSON object now, e.g. {"explanation": "..."}.',
   );
@@ -142,7 +142,7 @@ export async function generateTagging(
   const systemPrompt = buildTaggingPrompt(question, template);
 
   const { output: raw } = await callLLM(
-    settingsFromProvider(provider, { temperature }),
+    settingsFromProvider(provider, { temperature, maxTokens: OUTPUT_BUDGET.tagging }),
     systemPrompt,
     "Return the JSON object now.",
   );

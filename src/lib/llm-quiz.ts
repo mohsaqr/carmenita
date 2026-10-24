@@ -1,4 +1,4 @@
-import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
+import { callLLM, questionBudget, settingsFromProvider } from "@/lib/ai/llm";
 import { getPrompt, purposeStyleBlock, renderPrompt } from "@/lib/prompts";
 import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
 import { addDrops, NO_DROPS, reviewGenerated, type QualityDrops, type ReviewedBatch } from "@/lib/question-quality";
@@ -158,7 +158,7 @@ export async function generateQuizQuestions(
     const systemPrompt = instructions ? `${rendered}\n\n${customInstructionsBlock(instructions)}` : rendered;
     try {
       const { output } = await callLLM(
-        settingsFromProvider(provider, { temperature }),
+        settingsFromProvider(provider, { temperature, maxTokens: questionBudget(count) }),
         systemPrompt,
         "Generate the questions now as a JSON array.",
       );

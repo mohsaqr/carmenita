@@ -1,4 +1,4 @@
-import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
+import { callLLM, questionBudget, settingsFromProvider } from "@/lib/ai/llm";
 import { parseQuestionArray, type ParsedQuestion } from "@/lib/question-schema";
 import type { ProviderConfig, Question, VariationType } from "@/types";
 
@@ -183,6 +183,8 @@ export interface GenerateVariationsArgs {
   count: number;
   provider: ProviderConfig;
   temperature?: number;
+  /** Ends the LLM call when it aborts (the client has gone). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -193,7 +195,7 @@ export interface GenerateVariationsArgs {
 export async function generateVariations(
   args: GenerateVariationsArgs,
 ): Promise<ParsedQuestion[]> {
-  const { original, variationType, count, provider, temperature } = args;
+  const { original, variationType, count, provider, temperature, signal } = args;
 
   if (count < 1 || count > 20) {
     throw new Error("Variation count must be between 1 and 20");
@@ -213,9 +215,10 @@ export async function generateVariations(
   const systemPrompt = buildVariationPrompt(variationType, original, count);
 
   const { output: raw } = await callLLM(
-    settingsFromProvider(provider, { temperature }),
+    settingsFromProvider(provider, { temperature, maxTokens: questionBudget(count) }),
     systemPrompt,
     "Generate the variations now as a JSON array.",
+    signal,
   );
 
   return parseQuestionArray(raw);

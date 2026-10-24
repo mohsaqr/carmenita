@@ -61,6 +61,7 @@ async function handlePOST(req: NextRequest) {
       count,
       provider,
       temperature,
+      signal: req.signal,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown generation error";

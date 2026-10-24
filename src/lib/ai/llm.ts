@@ -12,9 +12,16 @@ import { logLine } from "@/lib/request-log";
  * remembers each correction for the life of the server process, so a batch
  * pays for a refusal once, not once per question.
  *
+ * Shared GPU servers (Dynasite on filex: 64 request slots for every app)
+ * shaped the rest, after Carmenita jammed Qwen there on 2026-10-24: every
+ * request carries an output cap, reasoning models are told not to think at
+ * length, at most MAX_IN_FLIGHT calls are open per endpoint, timeouts are
+ * never retried (the abandoned request keeps running on the GPU), and
+ * self-hosted endpoints stream with an idle timeout instead of a total one.
+ *
  * Left out of the port: Chrome built-in AI and WebGPU (they run inside a
- * browser tab, and every Carmenita LLM call runs in an API route), request
- * pacing and live diagnostics.
+ * browser tab, and every Carmenita LLM call runs in an API route) and live
+ * diagnostics.
  */
 
 export interface LLMSettings {
@@ -24,11 +31,18 @@ export interface LLMSettings {
   baseUrl?: string;
   azureApiVersion?: string;
   temperature?: number | null;
+  /** Output cap. Undefined = DEFAULT_MAX_TOKENS; null = none (only self-correction sets it). */
   maxTokens?: number | null;
   /** Internal: set by self-correction when a provider wants the renamed parameter. */
   tokenParam?: "max_tokens" | "max_completion_tokens";
+  /** Internal: set by self-correction when a server refuses `thinkingParams`. */
+  noThinkingParams?: boolean;
+  /** Internal: set by self-correction when a streaming server refuses `stream_options`. */
+  noStreamUsage?: boolean;
   retries?: number;
   timeoutMs?: number;
+  /** Streamed calls: give up when the model has sent nothing for this long. */
+  idleTimeoutMs?: number;
 }
 
 /** One turn of a conversation, for multi-turn calls (the chat). */
@@ -55,13 +69,24 @@ export interface LLMResult {
   usage: LLMUsage;
 }
 
-/** An LLM failure that carries the provider's HTTP status when there was one. */
+/**
+ * An LLM failure that carries the provider's HTTP status when there was one,
+ * the wait its `Retry-After` header asked for, and whether retrying is futile.
+ */
 export class LLMError extends Error {
   status?: number;
-  constructor(message: string, status?: number, options?: { cause?: unknown }) {
+  retryAfterMs?: number;
+  noRetry?: boolean;
+  constructor(
+    message: string,
+    status?: number,
+    options?: { cause?: unknown; retryAfterMs?: number; noRetry?: boolean },
+  ) {
     super(message, options);
     this.name = "LLMError";
     this.status = status;
+    this.retryAfterMs = options?.retryAfterMs;
+    this.noRetry = options?.noRetry;
   }
 }
 
@@ -83,11 +108,56 @@ export const PROVIDERS: Record<string, { label: string; baseUrl: string; model: 
 };
 
 /**
- * Anthropic requires `max_tokens`. A quiz batch is a long JSON array, so the
- * default is generous; a model with a lower ceiling says so in its error and
+ * The output cap a request carries when its caller set none. Without a cap a
+ * vLLM server lets a reply run to the context limit, and a thinking model can
+ * loop there for half an hour holding a GPU slot. 16 000 is the cap Dynasite's
+ * Qwen applies itself. A model with a lower ceiling says so in its error and
  * `adaptTokenParameter` clamps to it.
  */
-const ANTHROPIC_DEFAULT_MAX_TOKENS = 16000;
+export const DEFAULT_MAX_TOKENS = 16_000;
+
+/** Output budgets per kind of call, in tokens (a model's reasoning included). */
+export const OUTPUT_BUDGET = { chat: 2000, explanation: 1000, tagging: 800, test: 512 } as const;
+
+/**
+ * The budget for a reply of `count` questions. One question with five
+ * options, an explanation and tags is about 300–400 tokens; the rest is room
+ * for a model that reasons before answering.
+ */
+export function questionBudget(count: number): number {
+  return Math.min(DEFAULT_MAX_TOKENS, 2000 + 600 * Math.max(1, Math.round(count)));
+}
+
+/** The cap a request sends; undefined = none. Anthropic always needs one. */
+function effectiveMaxTokens(settings: LLMSettings): number | undefined {
+  if (settings.maxTokens === null) return settings.provider === "anthropic" ? DEFAULT_MAX_TOKENS : undefined;
+  return settings.maxTokens || DEFAULT_MAX_TOKENS;
+}
+
+/**
+ * Self-hosted OpenAI-compatible endpoints: vLLM, a LiteLLM proxy such as
+ * Dynasite (providerType "custom"), Ollama, LM Studio. Only these get the
+ * thinking switch and streaming; cloud APIs keep the request they always had.
+ */
+const SELF_HOSTED = new Set(["custom", "ollama", "lmstudio"]);
+
+/** True when calls to this provider stream (with an idle timeout). */
+export function streams(settings: LLMSettings): boolean {
+  return SELF_HOSTED.has(settings.provider);
+}
+
+/**
+ * Fields that keep a reasoning model from spending its budget thinking.
+ * Qwen3 thinks at length by default (vLLM's `enable_thinking` switch turns it
+ * off); gpt-oss reasons at medium effort unless told `low`. A server that
+ * refuses the fields gets them dropped by `adaptExtraParameters`.
+ */
+export function thinkingParams(settings: LLMSettings): Record<string, unknown> {
+  if (!SELF_HOSTED.has(settings.provider) || settings.noThinkingParams) return {};
+  if (/qwen3/i.test(settings.model)) return { chat_template_kwargs: { enable_thinking: false } };
+  if (/gpt-oss/i.test(settings.model)) return { reasoning_effort: "low" };
+  return {};
+}
 
 function cleanBase(url: string): string {
   return url.trim().replace(/\/+$/, "");
@@ -114,7 +184,7 @@ export function settingsFromProvider(
     // Current Claude models reject `temperature` outright; not sending it
     // saves the failed first request `adaptTemperature` would otherwise pay.
     temperature: provider.providerType === "anthropic" ? null : options.temperature ?? null,
-    maxTokens: options.maxTokens ?? null,
+    maxTokens: options.maxTokens ?? undefined,
   };
 }
 
@@ -149,7 +219,7 @@ export function buildProviderRequest(settings: LLMSettings, systemPrompt: string
   if (!base) throw new LLMError("A base URL is required", 400);
   if (!settings.model.trim()) throw new LLMError("A model ID is required", 400);
   const temperature = settings.temperature;
-  const maxTokens = settings.maxTokens || undefined;
+  const maxTokens = effectiveMaxTokens(settings);
   const tokenParam = settings.tokenParam || "max_tokens";
   const messages: ChatTurn[] = typeof input === "string" ? [{ role: "user", content: input }] : input;
   let url: string;
@@ -163,7 +233,7 @@ export function buildProviderRequest(settings: LLMSettings, systemPrompt: string
       model: settings.model,
       system: systemPrompt,
       messages,
-      max_tokens: maxTokens || ANTHROPIC_DEFAULT_MAX_TOKENS,
+      max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
       ...(temperature != null ? { temperature } : {}),
     };
   } else if (provider === "google") {
@@ -199,6 +269,10 @@ export function buildProviderRequest(settings: LLMSettings, systemPrompt: string
       messages: [{ role: "system", content: systemPrompt }, ...messages],
       ...(temperature != null ? { temperature } : {}),
       ...(maxTokens ? { [tokenParam]: maxTokens } : {}),
+      ...thinkingParams(settings),
+      ...(streams(settings)
+        ? { stream: true, ...(settings.noStreamUsage ? {} : { stream_options: { include_usage: true } }) }
+        : {}),
     };
   }
 
@@ -223,6 +297,78 @@ export function readProviderReply(provider: string, json: unknown): string {
   if (typeof content === "string") return splitThinkTags(content);
   if (Array.isArray(content)) return splitThinkTags(content.map((part: { text?: string }) => part.text || "").join(""));
   throw new LLMError("Provider response did not contain text output");
+}
+
+/** True when the reply stopped because it reached the output cap. */
+export function replyWasCut(provider: string, json: unknown): boolean {
+  const reply = json as {
+    stop_reason?: unknown;
+    candidates?: Array<{ finishReason?: unknown }>;
+    choices?: Array<{ finish_reason?: unknown }>;
+  };
+  if (provider === "anthropic") return reply.stop_reason === "max_tokens";
+  if (provider === "google") return reply.candidates?.[0]?.finishReason === "MAX_TOKENS";
+  return reply.choices?.[0]?.finish_reason === "length";
+}
+
+/**
+ * Read an OpenAI-style event stream (`data: {…}` lines ending `data: [DONE]`)
+ * into the shape a non-streamed reply has, so `readProviderReply` and
+ * `readProviderUsage` read both. Reasoning deltas are skipped (they are not
+ * the answer), but every chunk, keep-alive comments included, calls
+ * `onActivity`, so an idle timeout fires only when the server has gone quiet.
+ */
+export async function readEventStream(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  onActivity: () => void = () => {},
+): Promise<{ choices: Array<{ message: { content: string }; finish_reason: string | null }>; usage?: unknown }> {
+  const reader = body.getReader();
+  // Cancelling unblocks a pending read; the abort reason is thrown below, so
+  // a failure of the cancel itself has nothing left to report.
+  const cancel = () => void reader.cancel(signal.reason).catch(() => undefined);
+  signal.addEventListener("abort", cancel, { once: true });
+  const decoder = new TextDecoder();
+  let pending = "";
+  let content = "";
+  let finishReason: string | null = null;
+  let usage: unknown;
+  const readLine = (line: string) => {
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    const chunk = JSON.parse(data) as {
+      error?: { message?: string; code?: unknown } | string;
+      choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
+      usage?: unknown;
+    };
+    if (chunk.error) {
+      const error = typeof chunk.error === "string" ? { message: chunk.error } : chunk.error;
+      const code = Number(error.code);
+      throw new LLMError(String(error.message || "Stream error"), code >= 400 && code < 600 ? code : undefined);
+    }
+    const choice = chunk.choices?.[0];
+    if (typeof choice?.delta?.content === "string") content += choice.delta.content;
+    if (typeof choice?.finish_reason === "string") finishReason = choice.finish_reason;
+    if (chunk.usage) usage = chunk.usage;
+  };
+  try {
+    // A stream is read chunk by chunk until it ends; each read waits on the last.
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw signal.reason;
+      if (done) break;
+      onActivity();
+      pending += decoder.decode(value, { stream: true });
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? "";
+      lines.forEach(readLine);
+    }
+    readLine((pending + decoder.decode()).trim());
+  } finally {
+    signal.removeEventListener("abort", cancel);
+  }
+  return { choices: [{ message: { content }, finish_reason: finishReason }], ...(usage ? { usage } : {}) };
 }
 
 function count(value: unknown): number | null {
@@ -266,15 +412,140 @@ export function responseErrorMessage(status: number, statusText: string, text: s
   return String(detail || `${status} ${statusText}`);
 }
 
-async function responseError(response: Response): Promise<LLMError> {
-  const text = await response.text().catch(() => "");
-  return new LLMError(responseErrorMessage(response.status, response.statusText, text), response.status);
+/** A `Retry-After` header (seconds, or an HTTP date) in milliseconds; undefined when absent or unreadable. */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (!value?.trim()) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - now);
 }
 
-function retryable(error: unknown): boolean {
+async function responseError(response: Response): Promise<LLMError> {
+  const text = await response.text().catch(() => "");
+  return new LLMError(responseErrorMessage(response.status, response.statusText, text), response.status, {
+    retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
+  });
+}
+
+/** Waits before the 1st and 2nd retry. Long on purpose: a busy GPU needs minutes, not milliseconds. */
+export const RETRY_DELAYS_MS = [10_000, 30_000];
+const MAX_RETRY_WAIT_MS = 60_000;
+
+/** Statuses that mean "the server is busy": every call to the endpoint waits, not just this one. */
+const BUSY_STATUSES = [429, 503];
+
+/**
+ * Whether a failure is worth another request. Never a refusal, never an
+ * abort (the caller has gone) and never a timeout: a request that timed out,
+ * here or at a gateway (504, Cloudflare's 524), may still be running on the
+ * server, and a retry would only add to the load that made it slow.
+ */
+export function retryable(error: unknown): boolean {
+  if ((error as LLMError)?.noRetry) return false;
   const status = (error as { status?: number })?.status;
-  if (status && [400, 401, 403, 404, 422].includes(status)) return false;
-  return !(error instanceof DOMException && error.name === "AbortError");
+  if (status && [400, 401, 403, 404, 408, 422, 504, 524].includes(status)) return false;
+  return !(error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError"));
+}
+
+/** The wait before retry number `attempt` (1-based): the server's Retry-After, else the schedule; at most a minute. */
+export function retryDelayMs(error: unknown, attempt: number): number {
+  const planned = RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
+  return Math.min(MAX_RETRY_WAIT_MS, (error as LLMError)?.retryAfterMs ?? planned);
+}
+
+/** Resolves after `ms`; rejects with the signal's reason if it aborts first. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const stop = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", stop);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", stop, { once: true });
+  });
+}
+
+// ── Endpoint gate ───────────────────────────────────────────────────────────
+// A self-hosted GPU serves every app from one pool of request slots, and a
+// request Carmenita gives up on keeps running there. So the whole process
+// keeps at most MAX_IN_FLIGHT calls open per endpoint (every model behind one
+// base URL shares the pool) and queues the rest; after a 429/503 every call
+// to that endpoint holds back together instead of each worker retrying alone.
+
+export const MAX_IN_FLIGHT = 4;
+
+interface EndpointGate {
+  active: number;
+  waiting: Array<() => void>;
+  /** Epoch ms before which no call to the endpoint starts (a busy server's cool-down). */
+  notBefore: number;
+}
+
+const GATES = new Map<string, EndpointGate>();
+
+function endpointKey(settings: LLMSettings): string {
+  const preset = PROVIDERS[settings.provider] || PROVIDERS.custom;
+  return cleanBase(settings.baseUrl || preset.baseUrl) || settings.provider;
+}
+
+function gateFor(key: string): EndpointGate {
+  let gate = GATES.get(key);
+  if (!gate) {
+    gate = { active: 0, waiting: [], notBefore: 0 };
+    GATES.set(key, gate);
+  }
+  return gate;
+}
+
+/** Calls open to an endpoint right now — for tests and diagnosis. */
+export function callsInFlight(settings: LLMSettings): number {
+  return GATES.get(endpointKey(settings))?.active ?? 0;
+}
+
+function holdEndpoint(key: string, ms: number): void {
+  const gate = gateFor(key);
+  gate.notBefore = Math.max(gate.notBefore, Date.now() + ms);
+}
+
+/** Wait for a free slot (and the end of any cool-down); returns the release. */
+async function acquireSlot(key: string, signal?: AbortSignal): Promise<() => void> {
+  const gate = gateFor(key);
+  // Re-checked after every wake-up: a cool-down can start while waiting, and
+  // a newcomer can take the slot that was freed.
+  for (;;) {
+    const coolDown = gate.notBefore - Date.now();
+    if (coolDown > 0) {
+      await sleep(coolDown, signal);
+      continue;
+    }
+    if (gate.active < MAX_IN_FLIGHT) break;
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason);
+      const stop = () => {
+        gate.waiting = gate.waiting.filter((waiter) => waiter !== wake);
+        reject(signal?.reason);
+      };
+      const wake = () => {
+        signal?.removeEventListener("abort", stop);
+        resolve();
+      };
+      gate.waiting.push(wake);
+      signal?.addEventListener("abort", stop, { once: true });
+    });
+  }
+  gate.active += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    gate.active -= 1;
+    gate.waiting.shift()?.();
+  };
 }
 
 // ── Learned provider quirks ─────────────────────────────────────────────────
@@ -287,6 +558,8 @@ export interface ProviderQuirks {
   tokenParam?: "max_completion_tokens";
   /** The largest output cap the model accepted; null when it refused any. */
   maxTokens?: number | null;
+  noThinkingParams?: boolean;
+  noStreamUsage?: boolean;
 }
 
 const QUIRKS = new Map<string, ProviderQuirks>();
@@ -299,9 +572,10 @@ export function knownQuirks(settings: LLMSettings): ProviderQuirks | undefined {
   return QUIRKS.get(quirkKey(settings));
 }
 
-/** Forget every learned correction — for tests. */
+/** Forget every learned correction, and every endpoint's queue and cool-down — for tests. */
 export function forgetQuirks(): void {
   QUIRKS.clear();
+  GATES.clear();
 }
 
 function withKnownQuirks(settings: LLMSettings): LLMSettings {
@@ -310,9 +584,12 @@ function withKnownQuirks(settings: LLMSettings): LLMSettings {
   const next = { ...settings };
   if (learned.dropTemperature) next.temperature = null;
   if (learned.tokenParam) next.tokenParam = learned.tokenParam;
-  // A learned ceiling only ever lowers the configured value.
-  if (learned.maxTokens !== undefined && next.maxTokens != null) {
-    next.maxTokens = learned.maxTokens == null ? null : Math.min(next.maxTokens, learned.maxTokens);
+  if (learned.noThinkingParams) next.noThinkingParams = true;
+  if (learned.noStreamUsage) next.noStreamUsage = true;
+  // A learned ceiling only ever lowers the cap the call would send.
+  const cap = effectiveMaxTokens(next);
+  if (learned.maxTokens !== undefined && next.maxTokens !== null && cap) {
+    next.maxTokens = learned.maxTokens == null ? null : Math.min(cap, learned.maxTokens);
   }
   return next;
 }
@@ -323,7 +600,29 @@ function rememberQuirk(before: LLMSettings, after: LLMSettings): void {
   if (before.temperature != null && after.temperature == null) learned.dropTemperature = true;
   if (after.tokenParam === "max_completion_tokens" && after.tokenParam !== before.tokenParam) learned.tokenParam = after.tokenParam;
   if (after.maxTokens !== before.maxTokens) learned.maxTokens = after.maxTokens ?? null;
+  if (after.noThinkingParams && !before.noThinkingParams) learned.noThinkingParams = true;
+  if (after.noStreamUsage && !before.noStreamUsage) learned.noStreamUsage = true;
   QUIRKS.set(key, learned);
+}
+
+/**
+ * Drop a request field this transport adds on its own that the server
+ * refused: `stream_options` (older OpenAI-compatible servers), then the
+ * thinking switch (a server whose template has no `enable_thinking`, or no
+ * `reasoning_effort`). The call goes on without it rather than die.
+ */
+export function adaptExtraParameters(settings: LLMSettings, error: unknown): LLMSettings | null {
+  const message = String((error as Error)?.message || "");
+  if (/stream_options|include_usage/i.test(message) && streams(settings) && !settings.noStreamUsage) {
+    return { ...settings, noStreamUsage: true };
+  }
+  if (
+    /chat_template_kwargs|enable_thinking|reasoning_effort/i.test(message) &&
+    Object.keys(thinkingParams(settings)).length > 0
+  ) {
+    return { ...settings, noThinkingParams: true };
+  }
+  return null;
 }
 
 /**
@@ -349,12 +648,13 @@ export function adaptTokenParameter(settings: LLMSettings, error: unknown): LLMS
   if (/max_completion_tokens/i.test(message) && settings.tokenParam !== "max_completion_tokens") {
     return { ...settings, tokenParam: "max_completion_tokens" };
   }
-  // Anthropic always sends a cap, so a refused default counts as configured.
-  const configured = settings.maxTokens || (settings.provider === "anthropic" ? ANTHROPIC_DEFAULT_MAX_TOKENS : 0);
+  // Every request sends a cap (the default when none was set), so a refused
+  // default counts as configured.
+  const configured = effectiveMaxTokens(settings);
   if (configured) {
     const stated = (message.match(/\d{2,7}/g) || []).map(Number).filter((n) => n > 0 && n < configured);
     if (stated.length) return { ...settings, maxTokens: Math.max(...stated) };
-    if (settings.provider !== "anthropic" && settings.maxTokens) return { ...settings, maxTokens: null };
+    if (settings.provider !== "anthropic") return { ...settings, maxTokens: null };
   }
   return null;
 }
@@ -388,10 +688,12 @@ function finalError(error: unknown): LLMError {
  * so a failed or slow generation can be diagnosed from the service journal.
  * Never the key, the prompt or the reply.
  */
-function logCall(settings: LLMSettings, latencyMs: number, error?: unknown): void {
+function logCall(settings: LLMSettings, latencyMs: number, error?: unknown, outcome?: { cut: boolean; usage: LLMUsage }): void {
   const lead = `${settings.provider} ${settings.model} ${latencyMs}ms`;
   if (error === undefined) {
-    logLine("llm", {}, "info", `${lead} ok`);
+    const out = outcome?.usage.outputTokens;
+    const fields = { out: out ?? undefined, cap: effectiveMaxTokens(settings), cut: outcome?.cut ? true : undefined };
+    logLine("llm", fields, "info", `${lead} ok`);
     return;
   }
   const status = (error as { status?: number })?.status;
@@ -404,20 +706,38 @@ async function callOnce(
   systemPrompt: string,
   input: string | ChatTurn[],
   signal: AbortSignal,
-): Promise<{ output: string; usage: LLMUsage }> {
+  onActivity: () => void,
+): Promise<{ output: string; usage: LLMUsage; cut: boolean }> {
   const request = buildProviderRequest(settings, systemPrompt, input);
   const response = await fetch(request.url, { method: "POST", headers: request.headers, body: JSON.stringify(request.body), signal });
   if (!response.ok) throw await responseError(response);
-  const json = await response.json();
-  return {
-    output: readProviderReply(settings.provider, json),
-    usage: readProviderUsage(settings.provider, json, response.headers.get("x-litellm-response-cost")),
-  };
+  // Judged by what came back, not what was asked: a server that ignores
+  // `stream: true` answers with plain JSON.
+  const isStream = /text\/event-stream/i.test(response.headers.get("content-type") || "") && response.body;
+  const json = isStream ? await readEventStream(response.body as ReadableStream<Uint8Array>, signal, onActivity) : await response.json();
+  const output = readProviderReply(settings.provider, json);
+  const cut = replyWasCut(settings.provider, json);
+  if (cut && !output) {
+    // The same request would spend the same budget the same way.
+    throw new LLMError(
+      `The reply reached its limit of ${effectiveMaxTokens(settings)} tokens before giving any answer (the model spent them reasoning). Pick a model without thinking, or ask for fewer questions per run.`,
+      undefined,
+      { noRetry: true },
+    );
+  }
+  return { output, cut, usage: readProviderUsage(settings.provider, json, response.headers.get("x-litellm-response-cost")) };
 }
 
+/** Total time one request may take: non-streamed, and streamed (where the idle timeout does the real work). */
+const REQUEST_TIMEOUT_MS = 180_000;
+const STREAM_TIMEOUT_MS = 600_000;
+/** A streamed reply that sends nothing for this long is given up. */
+export const STREAM_IDLE_TIMEOUT_MS = 60_000;
+
 /**
- * One completion, with retries for transient failures and self-correction for
- * parameter refusals (which do not spend the retry budget).
+ * One completion, through the endpoint gate, with retries for transient
+ * failures (10 s, then 30 s, or the server's Retry-After) and self-correction
+ * for parameter refusals (which do not spend the retry budget).
  */
 export async function callLLM(
   settings: LLMSettings,
@@ -427,6 +747,7 @@ export async function callLLM(
 ): Promise<LLMResult> {
   const started = performance.now();
   const attempts = Math.max(1, (settings.retries ?? 2) + 1);
+  const endpoint = endpointKey(settings);
   let current = withKnownQuirks(settings);
   let adaptations = 0;
   let lastError: unknown;
@@ -434,20 +755,33 @@ export async function callLLM(
   // depends on how the previous one failed.
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (outerSignal?.aborted) throw outerSignal.reason ?? new DOMException("Request aborted", "AbortError");
+    const release = await acquireSlot(endpoint, outerSignal);
+    const streamed = streams(current);
     const controller = new AbortController();
-    const timeoutMs = Math.max(1000, current.timeoutMs || 180_000);
+    const timeoutMs = Math.max(1000, current.timeoutMs || (streamed ? STREAM_TIMEOUT_MS : REQUEST_TIMEOUT_MS));
     const timeout = setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), timeoutMs);
+    const idleMs = Math.max(1000, current.idleTimeoutMs || STREAM_IDLE_TIMEOUT_MS);
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const touch = () => {
+      if (!streamed) return;
+      clearTimeout(idle);
+      idle = setTimeout(
+        () => controller.abort(new DOMException(`Request timed out: the model sent nothing for ${Math.round(idleMs / 1000)} s`, "TimeoutError")),
+        idleMs,
+      );
+    };
     const abort = () => controller.abort(outerSignal?.reason);
     outerSignal?.addEventListener("abort", abort, { once: true });
+    touch();
     try {
-      const { output, usage } = await callOnce(current, systemPrompt, input, controller.signal);
+      const { output, usage, cut } = await callOnce(current, systemPrompt, input, controller.signal, touch);
       const latencyMs = Math.round(performance.now() - started);
-      logCall(current, latencyMs);
+      logCall(current, latencyMs, undefined, { cut, usage });
       return { output, latencyMs, usage };
     } catch (error) {
       lastError = error;
       if (!outerSignal?.aborted && adaptations < 3) {
-        const adapted = adaptTokenParameter(current, error) ?? adaptTemperature(current, error);
+        const adapted = adaptTokenParameter(current, error) ?? adaptTemperature(current, error) ?? adaptExtraParameters(current, error);
         if (adapted) {
           rememberQuirk(current, adapted);
           current = adapted;
@@ -460,10 +794,16 @@ export async function callLLM(
         logCall(current, Math.round(performance.now() - started), error);
         throw finalError(error);
       }
-      await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** (attempt - 1) + Math.random() * 150));
+      const delay = retryDelayMs(error, attempt);
+      if (BUSY_STATUSES.includes((error as { status?: number })?.status ?? 0)) holdEndpoint(endpoint, delay);
+      // The slot is free while this call waits; the wait ends early if the caller leaves.
+      release();
+      await sleep(delay, outerSignal);
     } finally {
       clearTimeout(timeout);
+      clearTimeout(idle);
       outerSignal?.removeEventListener("abort", abort);
+      release();
     }
   }
   logCall(current, Math.round(performance.now() - started), lastError);
@@ -514,7 +854,7 @@ export async function listModels(settings: LLMSettings, signal?: AbortSignal): P
  */
 export async function testConnection(settings: LLMSettings, signal?: AbortSignal): Promise<LLMResult & { ok: boolean }> {
   const reply = await callLLM(
-    { ...settings, retries: 0, timeoutMs: Math.min(settings.timeoutMs ?? 45_000, 45_000) },
+    { ...settings, retries: 0, maxTokens: OUTPUT_BUDGET.test, timeoutMs: Math.min(settings.timeoutMs ?? 45_000, 45_000) },
     "Reply with the single word OK.",
     "ping",
     signal,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { StoredChatMessage } from "@/db/schema";
-import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
+import { callLLM, OUTPUT_BUDGET, settingsFromProvider } from "@/lib/ai/llm";
 import { requireUser } from "@/lib/auth";
 import {
   appendToChat,
@@ -76,7 +76,7 @@ async function handlePOST(req: NextRequest) {
   let result;
   try {
     result = await callLLM(
-      { ...settingsFromProvider(provider, { temperature: temperature ?? 0.7 }), timeoutMs: CHAT_TIMEOUT_MS },
+      { ...settingsFromProvider(provider, { temperature: temperature ?? 0.7, maxTokens: OUTPUT_BUDGET.chat }), timeoutMs: CHAT_TIMEOUT_MS },
       system,
       [...toTurns(history), { role: "user", content: message }],
       req.signal,

@@ -68,6 +68,7 @@ describe("buildProviderRequest", () => {
       model: "gpt",
       messages: [{ role: "system", content: "sys" }, { role: "user", content: "hi" }],
       temperature: 0.2,
+      max_tokens: 16000,
     });
     const google = buildProviderRequest({ ...base, provider: "google", model: "gemini-2.5-flash" }, "sys", "hi");
     expect(google.url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
@@ -149,14 +150,20 @@ describe("self-correction", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("retries a transient failure, then succeeds", async () => {
+  it("retries a transient failure after the first wait (10 s), then succeeds", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(json(503, { error: { message: "overloaded" } }))
       .mockResolvedValueOnce(json(200, { choices: [{ message: { content: "OK" } }] }));
     vi.stubGlobal("fetch", fetchMock);
-    expect((await callLLM({ ...settings, retries: 1 }, "s", "u")).output).toBe("OK");
+    const result = callLLM({ ...settings, retries: 1 }, "s", "u");
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await result).output).toBe("OK");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 });
 
@@ -166,7 +173,7 @@ describe("call logging", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(200, { choices: [{ message: { content: "OK" } }] })));
     await callLLM({ provider: "openai", model: "gpt", apiKey: "sk-secret", retries: 0 }, "s", "u");
-    expect(info).toHaveBeenCalledWith(expect.stringMatching(/^\[llm\] openai gpt \d+ms ok$/));
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/^\[llm\] openai gpt \d+ms ok cap=16000$/));
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(404, { error: { message: "model: nope" } })));
     await callLLM({ provider: "openai", model: "nope", apiKey: "sk-secret", retries: 0 }, "s", "u").catch(() => {});

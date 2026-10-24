@@ -1,4 +1,4 @@
-import { callLLM, settingsFromProvider } from "@/lib/ai/llm";
+import { callLLM, questionBudget, settingsFromProvider } from "@/lib/ai/llm";
 import { getPrompt, purposeStyleBlock, renderPrompt } from "@/lib/prompts";
 import { parseQuestionArray } from "@/lib/question-schema";
 import { reviewGenerated, type ReviewedBatch } from "@/lib/question-quality";
@@ -52,6 +52,8 @@ export interface TopicGenerationArgs {
   avoid?: string[];
   purpose?: QuestionPurpose;
   style?: QuestionStyle;
+  /** Ends the LLM call when it aborts (the client has gone). */
+  signal?: AbortSignal;
 }
 
 /** Cap on how much of the earlier batches the prompt repeats back. */
@@ -139,7 +141,7 @@ ${instructions}
 export async function generateQuestionsFromTopic(
   args: TopicGenerationArgs,
 ): Promise<ReviewedBatch> {
-  const { topic, count, provider, temperature, objectives, customInstructions, avoid, multiAnswerShare } = args;
+  const { topic, count, provider, temperature, objectives, customInstructions, avoid, multiAnswerShare, signal } = args;
 
   if (
     !provider.apiKey &&
@@ -158,9 +160,10 @@ export async function generateQuestionsFromTopic(
   const systemPrompt = buildTopicPrompt(args);
 
   const { output: raw } = await callLLM(
-    settingsFromProvider(provider, { temperature }),
+    settingsFromProvider(provider, { temperature, maxTokens: questionBudget(count) }),
     systemPrompt,
     "Generate the questions now as a JSON array.",
+    signal,
   );
 
   const reviewed = reviewGenerated(parseQuestionArray(raw), {
