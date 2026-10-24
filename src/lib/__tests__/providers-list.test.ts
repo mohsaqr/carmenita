@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   addProvider,
+  chatProvider,
   isBuiltInProvider,
   pickerGroups,
   providerModels,
@@ -171,4 +172,40 @@ describe("store actions", () => {
     expect(useAppStore.getState().providers[id]).toBeUndefined();
     expect(useAppStore.getState().activeProviderId).toBeNull();
   });
+});
+
+describe("chatProvider (the Chat page's model)", () => {
+  const withDynasite = {
+    ...builtIns,
+    dynasite: { ...builtIns.dynasite, apiKey: "sk-d", defaultModel: "gpt-x", models: ["gpt-x", "claude-y"] },
+    openai: { ...builtIns.openai, apiKey: "sk-o", defaultModel: "gpt-4.1-mini" },
+  };
+
+  it("defaults to Dynasite once it has a key and a model, whatever the header picked", () => {
+    const p = chatProvider(withDynasite, null, "openai");
+    expect(p?.id).toBe("dynasite");
+    expect(p?.defaultModel).toBe("gpt-x");
+  });
+
+  it("falls back to the active provider while Dynasite has no key", () => {
+    expect(builtIns.dynasite.apiKey).toBe("");
+    const providers = { ...withDynasite, dynasite: builtIns.dynasite };
+    expect(chatProvider(providers, null, "openai")?.id).toBe("openai");
+    expect(chatProvider(providers, null, null)).toBeNull();
+  });
+
+  it("uses the chat's own pick, without changing the stored provider", () => {
+    const p = chatProvider(withDynasite, { providerId: "dynasite", model: "claude-y" }, "openai");
+    expect(p?.defaultModel).toBe("claude-y");
+    expect(withDynasite.dynasite.defaultModel).toBe("gpt-x");
+    expect(chatProvider(withDynasite, { providerId: "openai", model: "gpt-4.1-mini" }, null)?.id).toBe("openai");
+  });
+
+  it("ignores a pick that is no longer offered (unticked model, disabled or removed provider)", () => {
+    expect(chatProvider(withDynasite, { providerId: "dynasite", model: "gone" }, null)?.defaultModel).toBe("gpt-x");
+    expect(chatProvider(withDynasite, { providerId: "custom-9", model: "m" }, null)?.id).toBe("dynasite");
+    const off = { ...withDynasite, openai: { ...withDynasite.openai, isEnabled: false } };
+    expect(chatProvider(off, { providerId: "openai", model: "gpt-4.1-mini" }, null)?.id).toBe("dynasite");
+  });
+
 });

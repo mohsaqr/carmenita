@@ -363,6 +363,40 @@ export const appSettings = sqliteTable(
   }),
 );
 
+/** One message of a saved chat, as stored in `chats.messages`. */
+export interface StoredChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+  /** Assistant replies: which model answered, and what the provider reported it used. */
+  model?: string;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
+}
+
+// A saved conversation with a model, optionally about one bank question.
+// Temporary chats never reach this table. Messages live in one JSON column:
+// a chat is always read and written whole, never queried by message.
+export const chats = sqliteTable(
+  "chats",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    // SET NULL: deleting the question keeps the conversation.
+    questionId: text("question_id").references(() => questions.id, { onDelete: "set null" }),
+    messages: text("messages", { mode: "json" }).$type<StoredChatMessage[]>().notNull().default([]),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => ({
+    byUserUpdated: index("idx_chats_user_updated").on(t.userId, t.updatedAt),
+  }),
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Relations (for typed Drizzle queries like `db.query.quizzes.findFirst(...)`)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -426,3 +460,4 @@ export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type AppSetting = typeof appSettings.$inferSelect;
 export type QuestionSet = typeof questionSets.$inferSelect;
+export type Chat = typeof chats.$inferSelect;

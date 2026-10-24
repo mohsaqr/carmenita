@@ -18,6 +18,23 @@ import { withLog } from "@/lib/request-log";
  * 10k characters are rejected to avoid blowing up the row size on
  * free-text input.
  */
+/** GET /api/bank/questions/[id] — one of your questions (the chat page shows it). */
+async function handleGET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  const auth = requireUser(req);
+  if ("response" in auth) return auth.response;
+  const { id } = await context.params;
+  const question = db
+    .select()
+    .from(questions)
+    .where(and(eq(questions.id, id), eq(questions.userId, auth.user.id)))
+    .get();
+  if (!question) return NextResponse.json({ error: "Question not found" }, { status: 404 });
+  return NextResponse.json({ question });
+}
+
 const PatchSchema = z.object({
   notes: z.string().max(10_000).nullable().optional(),
 });
@@ -96,5 +113,6 @@ async function handleDELETE(
   return NextResponse.json({ deleted: id });
 }
 
+export const GET = withLog(handleGET);
 export const PATCH = withLog(handlePATCH);
 export const DELETE = withLog(handleDELETE);

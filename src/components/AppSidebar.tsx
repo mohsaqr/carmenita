@@ -15,6 +15,7 @@ import {
   Settings,
   GraduationCap,
   Users,
+  MessageCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
@@ -26,6 +27,8 @@ const PRIMARY_LINKS = [
   { href: "/take", label: "Take quiz", icon: BookOpen },
   { href: "/attempts", label: "Repeat", icon: RotateCcw },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  // The chat needs the server (it calls the model), so the static build has none.
+  ...(process.env.NEXT_PUBLIC_STATIC_BUILD === "1" ? [] : [{ href: "/chat", label: "Chat", icon: MessageCircle }]),
 ] as const;
 
 const SECONDARY_LINKS = [

@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import type { Attempt, Question, Answer } from "@/types";
 import { isScoringMethod, SCORING_LABELS, toPoints } from "@/lib/scoring";
 import { QuizScoringSelect } from "@/components/quiz/QuizScoringSelect";
+import { ChatAboutLink } from "@/components/quiz/ChatAboutLink";
 
 /** Fraction of the max earned; older answers have no `points` → 1 or 0. */
 function earnedFraction(answer: Answer | null): number {
@@ -296,6 +297,9 @@ function QuestionResult({
             Explanation
           </p>
           <p>{question.explanation}</p>
+          <div className="mt-2">
+            <ChatAboutLink questionId={question.id} />
+          </div>
         </div>
         {question.sourcePassage && (
           <blockquote className="border-l-4 border-muted-foreground/30 pl-3 text-xs italic text-muted-foreground">

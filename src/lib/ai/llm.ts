@@ -14,7 +14,7 @@ import { logLine } from "@/lib/request-log";
  *
  * Left out of the port: Chrome built-in AI and WebGPU (they run inside a
  * browser tab, and every Carmenita LLM call runs in an API route), request
- * pacing, live diagnostics and multi-turn input.
+ * pacing and live diagnostics.
  */
 
 export interface LLMSettings {
@@ -31,9 +31,28 @@ export interface LLMSettings {
   timeoutMs?: number;
 }
 
+/** One turn of a conversation, for multi-turn calls (the chat). */
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/**
+ * What a call used, as the provider reported it. Null when it didn't say.
+ * `costUsd` only comes from providers that price the call themselves (a
+ * LiteLLM proxy's `x-litellm-response-cost` header, OpenRouter's
+ * `usage.cost`); Carmenita keeps no price list of its own.
+ */
+export interface LLMUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+}
+
 export interface LLMResult {
   output: string;
   latencyMs: number;
+  usage: LLMUsage;
 }
 
 /** An LLM failure that carries the provider's HTTP status when there was one. */
@@ -119,8 +138,11 @@ export interface ProviderRequest {
   body: Record<string, unknown>;
 }
 
-/** The request one attempt sends. Pure: no network, no learned quirks. */
-export function buildProviderRequest(settings: LLMSettings, systemPrompt: string, userContent: string): ProviderRequest {
+/**
+ * The request one attempt sends. Pure: no network, no learned quirks.
+ * `input` is one user message, or a whole conversation (oldest first).
+ */
+export function buildProviderRequest(settings: LLMSettings, systemPrompt: string, input: string | ChatTurn[]): ProviderRequest {
   const provider = settings.provider;
   const preset = PROVIDERS[provider] || PROVIDERS.custom;
   const base = cleanBase(settings.baseUrl || preset.baseUrl);
@@ -129,7 +151,7 @@ export function buildProviderRequest(settings: LLMSettings, systemPrompt: string
   const temperature = settings.temperature;
   const maxTokens = settings.maxTokens || undefined;
   const tokenParam = settings.tokenParam || "max_tokens";
-  const messages = [{ role: "user", content: userContent }];
+  const messages: ChatTurn[] = typeof input === "string" ? [{ role: "user", content: input }] : input;
   let url: string;
   let headers: Record<string, string> = { "Content-Type": "application/json" };
   let body: Record<string, unknown>;
@@ -149,7 +171,8 @@ export function buildProviderRequest(settings: LLMSettings, systemPrompt: string
     headers = { ...headers, "x-goog-api-key": settings.apiKey };
     body = {
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: userContent }] }],
+      // Gemini calls the assistant "model".
+      contents: messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
       generationConfig: {
         ...(temperature != null ? { temperature } : {}),
         ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
@@ -200,6 +223,37 @@ export function readProviderReply(provider: string, json: unknown): string {
   if (typeof content === "string") return splitThinkTags(content);
   if (Array.isArray(content)) return splitThinkTags(content.map((part: { text?: string }) => part.text || "").join(""));
   throw new LLMError("Provider response did not contain text output");
+}
+
+function count(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Token counts (and a price, when the provider states one) from a reply.
+ * `costHeader` is a LiteLLM proxy's `x-litellm-response-cost`.
+ */
+export function readProviderUsage(provider: string, json: unknown, costHeader?: string | null): LLMUsage {
+  const reply = json as {
+    usage?: { input_tokens?: unknown; output_tokens?: unknown; prompt_tokens?: unknown; completion_tokens?: unknown; cost?: unknown };
+    usageMetadata?: { promptTokenCount?: unknown; candidatesTokenCount?: unknown };
+  };
+  const headerCost = costHeader != null && costHeader.trim() !== "" ? count(Number(costHeader)) : null;
+  if (provider === "anthropic") {
+    return { inputTokens: count(reply.usage?.input_tokens), outputTokens: count(reply.usage?.output_tokens), costUsd: headerCost };
+  }
+  if (provider === "google") {
+    return {
+      inputTokens: count(reply.usageMetadata?.promptTokenCount),
+      outputTokens: count(reply.usageMetadata?.candidatesTokenCount),
+      costUsd: headerCost,
+    };
+  }
+  return {
+    inputTokens: count(reply.usage?.prompt_tokens),
+    outputTokens: count(reply.usage?.completion_tokens),
+    costUsd: headerCost ?? count(reply.usage?.cost),
+  };
 }
 
 /** The provider's own error text when its body says one, else the body, else the status line. */
@@ -345,11 +399,20 @@ function logCall(settings: LLMSettings, latencyMs: number, error?: unknown): voi
   logLine("llm", { error: message }, "warn", `${lead} failed${status ? ` HTTP ${status}` : ""}`);
 }
 
-async function callOnce(settings: LLMSettings, systemPrompt: string, userContent: string, signal: AbortSignal): Promise<string> {
-  const request = buildProviderRequest(settings, systemPrompt, userContent);
+async function callOnce(
+  settings: LLMSettings,
+  systemPrompt: string,
+  input: string | ChatTurn[],
+  signal: AbortSignal,
+): Promise<{ output: string; usage: LLMUsage }> {
+  const request = buildProviderRequest(settings, systemPrompt, input);
   const response = await fetch(request.url, { method: "POST", headers: request.headers, body: JSON.stringify(request.body), signal });
   if (!response.ok) throw await responseError(response);
-  return readProviderReply(settings.provider, await response.json());
+  const json = await response.json();
+  return {
+    output: readProviderReply(settings.provider, json),
+    usage: readProviderUsage(settings.provider, json, response.headers.get("x-litellm-response-cost")),
+  };
 }
 
 /**
@@ -359,7 +422,7 @@ async function callOnce(settings: LLMSettings, systemPrompt: string, userContent
 export async function callLLM(
   settings: LLMSettings,
   systemPrompt: string,
-  userContent: string,
+  input: string | ChatTurn[],
   outerSignal?: AbortSignal,
 ): Promise<LLMResult> {
   const started = performance.now();
@@ -377,10 +440,10 @@ export async function callLLM(
     const abort = () => controller.abort(outerSignal?.reason);
     outerSignal?.addEventListener("abort", abort, { once: true });
     try {
-      const output = await callOnce(current, systemPrompt, userContent, controller.signal);
+      const { output, usage } = await callOnce(current, systemPrompt, input, controller.signal);
       const latencyMs = Math.round(performance.now() - started);
       logCall(current, latencyMs);
-      return { output, latencyMs };
+      return { output, latencyMs, usage };
     } catch (error) {
       lastError = error;
       if (!outerSignal?.aborted && adaptations < 3) {

@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { Question } from "@/types";
 import { scoreQuestion, toPoints, type ScoringMethod } from "@/lib/scoring";
+import { ChatAboutLink } from "@/components/quiz/ChatAboutLink";
 
 /**
  * Renders one question. Supports mcq-single, mcq-multi, and true-false.
@@ -146,6 +147,11 @@ export function QuestionCard({
             Submit answer
           </Button>
         )}
+        {!revealed && (
+          <div className="flex justify-end">
+            <ChatAboutLink questionId={question.id} hint />
+          </div>
+        )}
 
         {revealed && (
           <div className="space-y-3 pt-2">
@@ -178,6 +184,9 @@ export function QuestionCard({
                 )}
               </div>
               <p className="text-sm text-muted-foreground">{question.explanation}</p>
+              <div className="mt-2">
+                <ChatAboutLink questionId={question.id} />
+              </div>
             </div>
             {question.sourcePassage && (
               <blockquote className="border-l-4 border-muted-foreground/30 pl-3 text-xs italic text-muted-foreground">

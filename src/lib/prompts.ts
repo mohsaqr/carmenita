@@ -271,6 +271,26 @@ Rules:
 - No markdown. No code fences. No preamble.`;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 6. CHAT — the /chat page. Plain conversation, no JSON. The question prompt
+//    is the general one plus the question's details, filled per chat.
+// ─────────────────────────────────────────────────────────────────────────────
+const CHAT_GENERAL_DEFAULT = `You are Carmenita, a friendly and knowledgeable study companion. Talk with the learner naturally about whatever they are studying: explain ideas clearly, give examples, check their understanding with a question now and then, and say plainly when you are not sure of something. Keep answers short unless the learner asks for depth. Write plain text: the chat shows no Markdown, so no headings, bold or tables (a simple list with "-" is fine).`;
+
+const CHAT_QUESTION_DEFAULT = `You are Carmenita, a friendly and knowledgeable study companion. The learner wants to talk about one multiple-choice question from their question bank. Help them understand it: why the correct answer is right, why each tempting distractor is wrong, and the idea underneath. If they ask, quiz them with a similar question. Keep answers short unless the learner asks for depth. Write plain text: the chat shows no Markdown, so no headings, bold or tables (a simple list with "-" is fine).
+
+Question:
+{question}
+
+Options:
+{optionsList}
+
+Correct answer: {correctAnswer}
+
+Explanation on file: {explanation}
+
+Topic: {topic}`;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registry. Order matters for UI iteration — keep the generation prompts
 // first (document → topic → lecture) followed by the enhancement prompts.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,6 +329,20 @@ export const PROMPTS: Record<string, PromptDef> = {
     description:
       "Given an existing question, derives subject/lesson/topic/tags. Used by the Re-tag (N) bulk action on the bank page to clean up imported questions with poor metadata.",
     defaultValue: TAG_ADD_DEFAULT,
+  },
+  "carmenita.chat.general": {
+    id: "carmenita.chat.general",
+    name: "Chat",
+    description:
+      "The chatbot on the Chat page when no question is attached. Plain conversation.",
+    defaultValue: CHAT_GENERAL_DEFAULT,
+  },
+  "carmenita.chat.question": {
+    id: "carmenita.chat.question",
+    name: "Chat about a question",
+    description:
+      "The chatbot when it was opened from a question (bank or quiz review). Placeholders {question}, {optionsList}, {correctAnswer}, {explanation}, {topic} are filled from that question.",
+    defaultValue: CHAT_QUESTION_DEFAULT,
   },
   // Backwards-compat alias. Points at the same default as the document
   // prompt. Any user override already stored under "carmenita.mcq" in

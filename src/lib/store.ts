@@ -202,14 +202,50 @@ export function pickerGroups(providers: Record<string, ProviderConfig>): PickerG
     .filter((g) => g.models.length > 0);
 }
 
+/** A provider + model picked for one purpose (the chat), apart from the active one. */
+export interface ModelSelection {
+  providerId: string;
+  model: string;
+}
+
+/** A provider is usable when it is switched on, has a model, and has a key (local ones need none). */
+function usable(p: ProviderConfig | undefined): p is ProviderConfig {
+  if (!p || !p.isEnabled || providerModels(p).length === 0) return false;
+  return Boolean(p.apiKey) || p.providerType === "ollama" || p.providerType === "lmstudio";
+}
+
+/**
+ * The provider the chat uses: the model picked on the Chat page if it is
+ * still offered; else Dynasite when it is set up (the chat's default); else
+ * the active provider. The result's `defaultModel` is the model to call.
+ */
+export function chatProvider(
+  providers: Record<string, ProviderConfig>,
+  chatModel: ModelSelection | null,
+  activeProviderId: string | null,
+): ProviderConfig | null {
+  const picked = chatModel ? providers[chatModel.providerId] : undefined;
+  if (chatModel && usable(picked) && providerModels(picked).includes(chatModel.model)) {
+    return { ...picked, defaultModel: chatModel.model };
+  }
+  // `usable` guarantees a model; Dynasite's current one is always among those offered.
+  const dynasite = providers.dynasite;
+  if (usable(dynasite) && dynasite.defaultModel) return dynasite;
+  return activeProviderId ? providers[activeProviderId] ?? null : null;
+}
+
 interface AppState {
   providers: Record<string, ProviderConfig>;
   activeProviderId: string | null;
+  /** The Chat page's own pick; null = Dynasite when set up, else the active provider. */
+  chatModel: ModelSelection | null;
   systemSettings: SystemSettings;
   setProviderConfig: (id: string, patch: Partial<ProviderConfig>) => void;
   setActiveProvider: (id: string | null) => void;
   /** Header picker: make `providerId` active, running `model`. */
   selectModel: (providerId: string, model: string) => void;
+  /** Chat page picker: the chat's model only; generation keeps the active one. */
+  selectChatModel: (providerId: string, model: string) => void;
   addProvider: (type: SupportedProvider) => string;
   removeProvider: (id: string) => void;
   setSystemSettings: (patch: Partial<SystemSettings>) => void;
@@ -220,6 +256,7 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       providers: DEFAULT_PROVIDERS,
       activeProviderId: null,
+      chatModel: null,
       systemSettings: DEFAULT_SYSTEM_SETTINGS,
       setProviderConfig: (id, patch) =>
         set((state) => ({
@@ -238,6 +275,7 @@ export const useAppStore = create<AppState>()(
             providers: { ...state.providers, [providerId]: { ...provider, defaultModel: model } },
           };
         }),
+      selectChatModel: (providerId, model) => set({ chatModel: { providerId, model } }),
       addProvider: (type) => {
         const added = addProvider(get().providers, type);
         set({ providers: added.providers });
@@ -262,6 +300,7 @@ export const useAppStore = create<AppState>()(
             ...(saved?.providers ?? {}),
           }),
           activeProviderId: saved?.activeProviderId ?? null,
+          chatModel: saved?.chatModel ?? null,
           systemSettings: {
             ...DEFAULT_SYSTEM_SETTINGS,
             ...(saved?.systemSettings ?? {}),

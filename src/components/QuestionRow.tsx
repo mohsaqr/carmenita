@@ -1,9 +1,10 @@
 "use client";
 
 import { memo } from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { GitBranch, Sparkles, Trash2 } from "lucide-react";
+import { GitBranch, MessageCircle, Sparkles, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Question } from "@/types";
 
@@ -114,6 +115,13 @@ function QuestionRowImpl({
             </p>
           )}
         </div>
+        {process.env.NEXT_PUBLIC_STATIC_BUILD !== "1" && (
+          <Button variant="ghost" size="icon-sm" asChild title="Chat about this question">
+            <Link href={`/chat?question=${question.id}`}>
+              <MessageCircle className="h-4 w-4" />
+            </Link>
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon-sm"

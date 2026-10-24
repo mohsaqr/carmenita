@@ -13,7 +13,7 @@ import {
   SelectSeparator,
   SelectTrigger,
 } from "@/components/ui/select";
-import { pickerGroups, useAppStore } from "@/lib/store";
+import { pickerGroups, useAppStore, type ModelSelection } from "@/lib/store";
 
 const MANAGE = "__manage__";
 // Option values pair a provider id with a model id. Provider ids are
@@ -25,13 +25,26 @@ const SEP = "::";
  * page: one line per ticked model, grouped by provider. Every LLM call
  * (generate, topic, explain, re-tag, variations) reads the active
  * provider's `defaultModel`, so the pick applies to all of them.
+ *
+ * With `selection` + `onSelect` it picks for one purpose instead (the Chat
+ * page's own model) and leaves the active provider alone.
  */
-export function ModelPicker() {
+export function ModelPicker({
+  selection,
+  onSelect,
+  label = "Model used for generation",
+}: {
+  selection?: ModelSelection | null;
+  onSelect?: (providerId: string, model: string) => void;
+  label?: string;
+} = {}) {
   const router = useRouter();
   const providers = useAppStore((s) => s.providers);
-  const activeProviderId = useAppStore((s) => s.activeProviderId);
+  const storeActiveId = useAppStore((s) => s.activeProviderId);
   const selectModel = useAppStore((s) => s.selectModel);
   const groups = pickerGroups(providers);
+  const choose = onSelect ?? selectModel;
+  const activeProviderId = onSelect ? selection?.providerId ?? null : storeActiveId;
 
   if (groups.length === 0) {
     return (
@@ -42,7 +55,7 @@ export function ModelPicker() {
   }
 
   const active = groups.find((g) => g.providerId === activeProviderId);
-  const activeModel = active ? providers[active.providerId].defaultModel : "";
+  const activeModel = active ? (onSelect ? selection?.model ?? "" : providers[active.providerId].defaultModel) : "";
   const value = active && activeModel ? `${active.providerId}${SEP}${activeModel}` : "";
 
   return (
@@ -54,10 +67,10 @@ export function ModelPicker() {
           return;
         }
         const at = v.indexOf(SEP);
-        selectModel(v.slice(0, at), v.slice(at + SEP.length));
+        choose(v.slice(0, at), v.slice(at + SEP.length));
       }}
     >
-      <SelectTrigger size="sm" className="max-w-[18rem]" aria-label="Model used for generation">
+      <SelectTrigger size="sm" className="max-w-[18rem]" aria-label={label}>
         <Cpu className="h-4 w-4" />
         {active && activeModel ? (
           <span className="truncate">

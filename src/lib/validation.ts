@@ -367,3 +367,48 @@ export type BankExplainBody = z.infer<typeof BankExplainSchema>;
 export type BankRetagBody = z.infer<typeof BankRetagSchema>;
 export type QuickQuizBody = z.infer<typeof QuickQuizSchema>;
 export type BankVariationsBatchBody = z.infer<typeof BankVariationsBatchSchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /api/chat and /api/chats
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ChatTurnSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().min(1).max(50_000),
+});
+
+/**
+ * One message to the chatbot. A saved chat (`chatId`) supplies its own
+ * history from the database; a temporary one sends `history`. `save: true`
+ * on a chat without an id stores it, history included.
+ */
+export const ChatSendSchema = z.object({
+  provider: ProviderConfigSchema,
+  message: z.string().trim().min(1).max(20_000),
+  history: z.array(ChatTurnSchema).max(200).optional(),
+  chatId: z.string().min(1).optional(),
+  questionId: z.string().min(1).optional(),
+  save: z.boolean().default(false),
+  /** The learner hasn't answered the attached question: the tutor must not give it away. */
+  hint: z.boolean().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+});
+
+const StoredChatMessageSchema = ChatTurnSchema.extend({
+  createdAt: z.string().min(1).max(40),
+  model: z.string().max(300).optional(),
+  inputTokens: z.number().int().nonnegative().nullable().optional(),
+  outputTokens: z.number().int().nonnegative().nullable().optional(),
+  costUsd: z.number().nonnegative().nullable().optional(),
+});
+
+/** Save a temporary chat as it stands, without sending anything. */
+export const ChatSaveSchema = z.object({
+  title: z.string().trim().max(200).optional(),
+  questionId: z.string().min(1).nullable().optional(),
+  messages: z.array(StoredChatMessageSchema).min(1).max(400),
+});
+
+export const ChatRenameSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+});

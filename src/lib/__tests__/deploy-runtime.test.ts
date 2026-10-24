@@ -54,7 +54,7 @@ describe("applyMigrations", () => {
       .all()
       .map((r) => (r as { name: string }).name);
     sqlite.close();
-    expect(tables).toEqual(expect.arrayContaining(["questions", "quizzes", "users", "sessions", "app_settings", "question_sets"]));
+    expect(tables).toEqual(expect.arrayContaining(["questions", "quizzes", "users", "sessions", "app_settings", "question_sets", "chats"]));
   });
 
   it("re-runs only the missing migration, and fails loudly rather than starting half-migrated", () => {
@@ -68,8 +68,17 @@ describe("applyMigrations", () => {
       .run();
     expect(gone.changes).toBe(1);
     sqlite.close();
-    // Only 0012 is re-run; its first statement drops an index that no longer exists.
-    expect(() => applyMigrations(db, MIGRATIONS)).toThrow(/idx_questions_user_id/);
+    // Only the newest migration is re-run, and its objects already exist
+    // (or, for one that drops an index, no longer do).
+    // Drizzle wraps the SQLite error; the reason is in `cause`.
+    let error: unknown;
+    try {
+      applyMigrations(db, MIGRATIONS);
+    } catch (err) {
+      error = err;
+    }
+    expect(String(error)).toMatch(/Failed to run the query/);
+    expect(String((error as { cause?: unknown }).cause)).toMatch(/already exists|no such index/);
   });
 
   it("refuses a folder with no migrations instead of starting on an unknown schema", () => {

@@ -182,7 +182,7 @@ function assertProvider(provider: ProviderConfig): void {
   }
 }
 
-function letter(idx: number): string {
+export function letter(idx: number): string {
   return String.fromCharCode("A".charCodeAt(0) + idx);
 }
 
@@ -192,7 +192,7 @@ function letter(idx: number): string {
  * position reference and the actual correct-answer text to ground its
  * explanation in.
  */
-function describeCorrectAnswer(
+export function describeCorrectAnswer(
   options: string[],
   correctAnswer: number | number[],
 ): string {
