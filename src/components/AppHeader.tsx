@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { CarmenitaHeart } from "@/components/CarmenitaHeart";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
+import { ModelPicker } from "@/components/ModelPicker";
 
 interface AppHeaderProps {
   onMenuClick: () => void;
@@ -41,8 +42,11 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
         <span>Carmenita</span>
         <CarmenitaHeart />
       </Link>
+      <div className="ml-auto">
+        <ModelPicker />
+      </div>
       {username && (
-        <div className="ml-auto flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm">
           <span className="flex items-center gap-1.5 text-muted-foreground">
             <User className="h-4 w-4" />
             {username}

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAppStore } from "@/lib/store";
+import { isBuiltInProvider, providerModels, toggleModel, useAppStore } from "@/lib/store";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
@@ -33,13 +34,27 @@ import {
   fetchPromptOverride,
   savePromptOverride,
 } from "@/lib/prompt-overrides-client";
-import type { ProviderConfig } from "@/types";
+import type { ProviderConfig, SupportedProvider } from "@/types";
+
+const ADDABLE_TYPES: { type: SupportedProvider; label: string }[] = [
+  { type: "custom", label: "Custom OpenAI-compatible URL" },
+  { type: "openai", label: "OpenAI" },
+  { type: "anthropic", label: "Anthropic" },
+  { type: "google", label: "Google (Gemini)" },
+  { type: "groq", label: "Groq" },
+  { type: "together", label: "Together.ai" },
+  { type: "azure", label: "Azure OpenAI" },
+  { type: "openrouter", label: "OpenRouter" },
+  { type: "ollama", label: "Ollama (local)" },
+  { type: "lmstudio", label: "LM Studio (local)" },
+];
 
 /**
  * Settings page. Lets the user:
  *  - Configure each of the 10 LLM providers (API key, base URL, model)
  *  - Toggle each provider enabled/disabled
- *  - Select the ACTIVE provider (the one used by /upload)
+ *  - Add more providers (extra custom URLs, a second model on one provider)
+ *  - Select the ACTIVE provider (also switchable from the header picker)
  *  - Edit the MCQ generation prompt (saved to the database)
  *  - Adjust system settings (temperature, autoRetry)
  */
@@ -50,10 +65,13 @@ export default function SettingsPage() {
     systemSettings,
     setProviderConfig,
     setActiveProvider,
+    addProvider,
+    removeProvider,
     setSystemSettings,
   } = useAppStore();
 
   const providerList = Object.values(providers);
+  const [newType, setNewType] = useState<SupportedProvider>("custom");
 
   return (
     // suppressHydrationWarning: password-manager extensions flag the API
@@ -106,7 +124,9 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Providers</CardTitle>
           <CardDescription>
-            Click a provider to configure it. The highlighted one is active.
+            Click a provider to configure it. The highlighted one is active; switch
+            between enabled ones from the model picker at the top of any page. Add
+            as many as you need — several custom URLs, or two models on one provider.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -117,8 +137,34 @@ export default function SettingsPage() {
               isActive={activeProviderId === provider.id}
               onActivate={() => setActiveProvider(provider.id)}
               onChange={(patch) => setProviderConfig(provider.id, patch)}
+              onRemove={
+                isBuiltInProvider(provider.id) ? undefined : () => removeProvider(provider.id)
+              }
             />
           ))}
+          <div className="flex items-center gap-2 border-t pt-4">
+            <Select value={newType} onValueChange={(v) => setNewType(v as SupportedProvider)}>
+              <SelectTrigger className="w-72" aria-label="Provider type to add">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ADDABLE_TYPES.map((t) => (
+                  <SelectItem key={t.type} value={t.type}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              onClick={() => {
+                addProvider(newType);
+                toast.success("Provider added — open Edit to set its URL, key and model");
+              }}
+            >
+              Add provider
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -134,23 +180,31 @@ function ProviderRow({
   isActive,
   onActivate,
   onChange,
+  onRemove,
 }: {
   provider: ProviderConfig;
   isActive: boolean;
   onActivate: () => void;
   onChange: (patch: Partial<ProviderConfig>) => void;
+  /** Present only for providers the user added. */
+  onRemove?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const ticked = providerModels(provider);
+  // A provider added a moment ago opens straight into its form.
+  const [expanded, setExpanded] = useState(Boolean(onRemove) && ticked.length === 0);
   const [availableModels, setAvailableModels] = useState<string[] | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
-
-  const [testing, setTesting] = useState(false);
+  const [manualModel, setManualModel] = useState("");
+  // The model id under test, or null — one request at a time per provider.
+  const [testingModel, setTestingModel] = useState<string | null>(null);
   const temperature = useAppStore((state) => state.systemSettings.temperature);
 
   // Every provider but Azure lists its models over the API (Azure names
-  // deployments in its portal). The list is a suggestion: the model field
-  // stays free text, since a provider's /models is often incomplete.
+  // deployments in its portal). The list is a suggestion: ids can always
+  // be added by hand, since a provider's /models is often incomplete.
   const canProbeModels = provider.providerType !== "azure";
+  // Ticked models first (in the picker's order), then the rest the provider listed.
+  const rows = [...ticked, ...(availableModels ?? []).filter((m) => !ticked.includes(m))];
 
   async function loadModels() {
     setLoadingModels(true);
@@ -173,8 +227,8 @@ function ProviderRow({
         return;
       }
       setAvailableModels(models);
-      toast.success(`Found ${models.length} model${models.length === 1 ? "" : "s"}`);
-      if (!provider.defaultModel) onChange({ defaultModel: models[0] });
+      toast.success(`Found ${models.length} model${models.length === 1 ? "" : "s"} — tick the ones you want`);
+      if (ticked.length === 0) onChange(toggleModel(provider, models[0], true));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not load models");
     } finally {
@@ -182,26 +236,36 @@ function ProviderRow({
     }
   }
 
+  function addManualModel() {
+    const id = manualModel.trim();
+    if (!id) return;
+    onChange(toggleModel(provider, id, true));
+    setManualModel("");
+  }
+
   // One real request down the path quiz generation uses — proves the key,
   // the model id and the parameters together, not just that a key exists.
-  async function testProvider() {
-    setTesting(true);
+  async function testModel(model: string) {
+    setTestingModel(model);
     try {
       const res = await fetch("/api/llm/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, temperature: temperature ?? undefined }),
+        body: JSON.stringify({
+          provider: { ...provider, defaultModel: model },
+          temperature: temperature ?? undefined,
+        }),
       });
       const data = (await res.json()) as { ok?: boolean; latencyMs?: number; error?: string };
       if (data.ok) {
-        toast.success(`${provider.displayName} answered in ${((data.latencyMs ?? 0) / 1000).toFixed(1)} s`);
+        toast.success(`${model} answered in ${((data.latencyMs ?? 0) / 1000).toFixed(1)} s`);
       } else {
-        toast.error(data.error ?? "The model answered with no text");
+        toast.error(data.error ?? `${model} answered with no text`);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Test failed");
     } finally {
-      setTesting(false);
+      setTestingModel(null);
     }
   }
 
@@ -223,7 +287,13 @@ function ProviderRow({
             {provider.apiKey && <Badge variant="secondary">Key set</Badge>}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 truncate">
-            {provider.defaultModel || <em>no model set</em>}
+            {ticked.length === 0 ? (
+              <em>no model set</em>
+            ) : ticked.length === 1 ? (
+              ticked[0]
+            ) : (
+              `${ticked.length} models · ${ticked.join(", ")}`
+            )}
             {provider.baseUrl ? ` · ${provider.baseUrl}` : ""}
           </p>
         </div>
@@ -231,7 +301,7 @@ function ProviderRow({
           variant={isActive ? "default" : "outline"}
           size="sm"
           onClick={onActivate}
-          disabled={!provider.isEnabled}
+          disabled={!provider.isEnabled || ticked.length === 0}
         >
           {isActive ? "Active" : "Activate"}
         </Button>
@@ -241,8 +311,19 @@ function ProviderRow({
       </div>
 
       {expanded && (
-        <div className="mt-4 space-y-3 border-t pt-4">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="mt-4 space-y-4 border-t pt-4">
+          {onRemove && (
+            <div className="space-y-1.5">
+              <Label htmlFor={`${provider.id}-name`}>Name</Label>
+              <Input
+                id={`${provider.id}-name`}
+                value={provider.displayName}
+                onChange={(e) => onChange({ displayName: e.target.value })}
+                placeholder="e.g. University GPU server"
+              />
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor={`${provider.id}-key`}>API key</Label>
               <Input
@@ -258,74 +339,106 @@ function ProviderRow({
               />
             </div>
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label htmlFor={`${provider.id}-model`}>Default model</Label>
-                {canProbeModels && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    onClick={loadModels}
-                    disabled={loadingModels}
-                  >
-                    {loadingModels ? "Loading…" : "Load models"}
-                  </Button>
-                )}
-              </div>
-              {canProbeModels && availableModels && availableModels.length > 0 ? (
-                <select
-                  id={`${provider.id}-model`}
-                  value={provider.defaultModel}
-                  onChange={(e) => onChange({ defaultModel: e.target.value })}
-                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  {!availableModels.includes(provider.defaultModel) && provider.defaultModel && (
-                    <option value={provider.defaultModel}>
-                      {provider.defaultModel} (custom)
-                    </option>
-                  )}
-                  {availableModels.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <Input
-                  id={`${provider.id}-model`}
-                  value={provider.defaultModel}
-                  onChange={(e) => onChange({ defaultModel: e.target.value })}
-                  placeholder={
-                    provider.providerType === "lmstudio"
-                      ? "e.g. google/gemma-4-26b-a4b — click Load models"
-                      : provider.providerType === "ollama"
-                        ? "e.g. llama3, mistral, qwen2 — click Load models"
-                        : "gpt-4o"
-                  }
-                />
-              )}
+              <Label htmlFor={`${provider.id}-base`}>Base URL (optional)</Label>
+              <Input
+                id={`${provider.id}-base`}
+                value={provider.baseUrl ?? ""}
+                onChange={(e) => onChange({ baseUrl: e.target.value })}
+                placeholder={
+                  provider.providerType === "custom"
+                    ? "https://your-endpoint/v1"
+                    : provider.providerType === "azure"
+                      ? "resource name, or https://<resource>.openai.azure.com"
+                      : "(defaults to provider URL)"
+                }
+              />
             </div>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor={`${provider.id}-base`}>Base URL (optional)</Label>
-            <Input
-              id={`${provider.id}-base`}
-              value={provider.baseUrl ?? ""}
-              onChange={(e) => onChange({ baseUrl: e.target.value })}
-              placeholder={
-                provider.providerType === "custom"
-                  ? "https://your-endpoint/v1"
-                  : provider.providerType === "azure"
-                    ? "resource name, or https://<resource>.openai.azure.com"
-                    : "(defaults to provider URL)"
-              }
-            />
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">Models in the dropdown</p>
+                <p className="text-xs text-muted-foreground">
+                  Ticked models each get a line in the header picker.
+                  {canProbeModels
+                    ? " Load models asks the provider which ones your key can use."
+                    : " Azure lists deployments in its portal — add their names below."}
+                </p>
+              </div>
+              {canProbeModels && (
+                <Button type="button" variant="outline" size="sm" onClick={loadModels} disabled={loadingModels}>
+                  {loadingModels ? "Loading…" : "Load models"}
+                </Button>
+              )}
+            </div>
+            {rows.length > 0 && (
+              <ul className="max-h-72 divide-y overflow-y-auto rounded-md border">
+                {rows.map((m) => {
+                  const on = ticked.includes(m);
+                  const current = on && m === provider.defaultModel;
+                  const boxId = `${provider.id}-model-${m}`;
+                  return (
+                    <li key={m} className="flex items-center gap-3 px-3 py-2 text-sm">
+                      <Checkbox
+                        id={boxId}
+                        checked={on}
+                        onCheckedChange={(c) => onChange(toggleModel(provider, m, c === true))}
+                      />
+                      <label htmlFor={boxId} className={`flex-1 truncate ${on ? "" : "text-muted-foreground"}`}>
+                        {m}
+                      </label>
+                      {current && <Badge variant="secondary">Current</Badge>}
+                      {on && !current && (
+                        <Button type="button" variant="ghost" size="xs" onClick={() => onChange({ defaultModel: m })}>
+                          Use
+                        </Button>
+                      )}
+                      {on && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          onClick={() => void testModel(m)}
+                          disabled={testingModel !== null}
+                        >
+                          {testingModel === m ? "Testing…" : "Test"}
+                        </Button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <div className="flex gap-2">
+              <Input
+                aria-label={`Add a model id to ${provider.displayName}`}
+                value={manualModel}
+                onChange={(e) => setManualModel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addManualModel();
+                }}
+                placeholder={
+                  provider.providerType === "lmstudio"
+                    ? "e.g. google/gemma-4-26b-a4b — or click Load models"
+                    : provider.providerType === "ollama"
+                      ? "e.g. llama3, mistral, qwen2 — or click Load models"
+                      : "Add a model id by hand"
+                }
+              />
+              <Button type="button" variant="outline" onClick={addManualModel} disabled={!manualModel.trim()}>
+                Add
+              </Button>
+            </div>
           </div>
-          <div className="flex justify-end">
-            <Button type="button" variant="outline" size="sm" onClick={testProvider} disabled={testing}>
-              {testing ? "Testing…" : "Test connection"}
-            </Button>
-          </div>
+
+          {onRemove && (
+            <div className="flex justify-end">
+              <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={onRemove}>
+                Remove provider
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

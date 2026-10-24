@@ -45,7 +45,10 @@ export interface ProviderConfig {
   displayName: string;
   apiKey: string;
   baseUrl?: string;
+  /** The model calls use when this provider is active (the picked one). */
   defaultModel: string;
+  /** Models offered in the header picker. Absent = just `defaultModel`. */
+  models?: string[];
   isEnabled: boolean;
 }
 

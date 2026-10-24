@@ -75,6 +75,15 @@ describe("buildProviderRequest", () => {
     expect(azure.url).toBe("https://r.openai.azure.com/openai/deployments/dep/chat/completions?api-version=2024-10-21");
   });
 
+  it("sends a custom URL (Dynasite's LiteLLM proxy) to /chat/completions with a Bearer key", () => {
+    const urls = ["https://api.dynasite.org/v1", "https://api.dynasite.org/v1/"].map((baseUrl) => {
+      const req = buildProviderRequest({ ...base, provider: "custom", model: "m", apiKey: "sk-1", baseUrl }, "s", "u");
+      expect(req.headers.Authorization).toBe("Bearer sk-1");
+      return req.url;
+    });
+    expect(urls).toEqual(Array(2).fill("https://api.dynasite.org/v1/chat/completions"));
+  });
+
   it("refuses a missing base URL or model", () => {
     expect(() => buildProviderRequest({ ...base, provider: "custom" }, "s", "u")).toThrow(/base URL/);
     expect(() => buildProviderRequest({ ...base, model: " " }, "s", "u")).toThrow(/model ID/);

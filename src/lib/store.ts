@@ -88,6 +88,12 @@ const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
     baseUrl: "",
     isEnabled: false,
   }),
+  // A LiteLLM proxy (OpenAI-compatible, Bearer key). Kept after `custom`
+  // so "Add provider → custom" still copies the blank custom template.
+  // Model left empty: the proxy decides which ids exist — "Load models".
+  dynasite: defaultProvider("dynasite", "custom", "Dynasite", "", {
+    baseUrl: "https://api.dynasite.org/v1",
+  }),
 };
 
 /**
@@ -111,18 +117,107 @@ export function replaceRetiredModels(
   );
 }
 
+/** True for the providers Carmenita ships with; those can't be removed. */
+export function isBuiltInProvider(id: string): boolean {
+  return Object.hasOwn(DEFAULT_PROVIDERS, id);
+}
+
+/**
+ * Adds another provider of `type` — a second custom URL, or a second
+ * model on a provider already set up. It starts from the built-in
+ * defaults for that type (base URL, local placeholder key) with an empty
+ * model, under a fresh id `<type>-<n>`.
+ */
+export function addProvider(
+  providers: Record<string, ProviderConfig>,
+  type: SupportedProvider,
+): { providers: Record<string, ProviderConfig>; id: string } {
+  const template = Object.values(DEFAULT_PROVIDERS).find((p) => p.providerType === type);
+  const taken = new Set(Object.keys(providers));
+  let n = 2;
+  while (taken.has(`${type}-${n}`)) n += 1;
+  const id = `${type}-${n}`;
+  const base = template ?? defaultProvider(id, type, type, "");
+  const config: ProviderConfig = {
+    ...base,
+    id,
+    displayName: `${base.displayName} ${n}`,
+    defaultModel: "",
+    isEnabled: true,
+  };
+  return { providers: { ...providers, [id]: config }, id };
+}
+
+/** Removes an added provider; clears the active choice if it was that one. */
+export function removeProvider(
+  providers: Record<string, ProviderConfig>,
+  activeProviderId: string | null,
+  id: string,
+): { providers: Record<string, ProviderConfig>; activeProviderId: string | null } {
+  if (isBuiltInProvider(id)) return { providers, activeProviderId };
+  const rest = Object.fromEntries(Object.entries(providers).filter(([key]) => key !== id));
+  return { providers: rest, activeProviderId: activeProviderId === id ? null : activeProviderId };
+}
+
+/**
+ * The models a provider offers in the picker: its ticked `models` plus
+ * the current `defaultModel` (so a saved setup from before the list
+ * existed, or a hand-typed id, still shows). Order kept, no blanks.
+ */
+export function providerModels(provider: ProviderConfig): string[] {
+  const all = [...(provider.models ?? []), provider.defaultModel].map((m) => m.trim());
+  return [...new Set(all.filter(Boolean))];
+}
+
+/**
+ * Ticks or unticks one model. Unticking the current model moves the
+ * provider to its next ticked one (or none); ticking the first model of
+ * a provider with no current model makes it current.
+ */
+export function toggleModel(
+  provider: ProviderConfig,
+  model: string,
+  on: boolean,
+): Pick<ProviderConfig, "models" | "defaultModel"> {
+  const id = model.trim();
+  const current = providerModels(provider);
+  const models = on
+    ? [...new Set([...current, id].filter(Boolean))]
+    : current.filter((m) => m !== id);
+  const defaultModel = models.includes(provider.defaultModel) ? provider.defaultModel : models[0] ?? "";
+  return { models, defaultModel };
+}
+
+export interface PickerGroup {
+  providerId: string;
+  displayName: string;
+  models: string[];
+}
+
+/** The header picker's groups: enabled providers that offer a model. */
+export function pickerGroups(providers: Record<string, ProviderConfig>): PickerGroup[] {
+  return Object.values(providers)
+    .filter((p) => p.isEnabled)
+    .map((p) => ({ providerId: p.id, displayName: p.displayName, models: providerModels(p) }))
+    .filter((g) => g.models.length > 0);
+}
+
 interface AppState {
   providers: Record<string, ProviderConfig>;
   activeProviderId: string | null;
   systemSettings: SystemSettings;
   setProviderConfig: (id: string, patch: Partial<ProviderConfig>) => void;
   setActiveProvider: (id: string | null) => void;
+  /** Header picker: make `providerId` active, running `model`. */
+  selectModel: (providerId: string, model: string) => void;
+  addProvider: (type: SupportedProvider) => string;
+  removeProvider: (id: string) => void;
   setSystemSettings: (patch: Partial<SystemSettings>) => void;
 }
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       providers: DEFAULT_PROVIDERS,
       activeProviderId: null,
       systemSettings: DEFAULT_SYSTEM_SETTINGS,
@@ -134,6 +229,22 @@ export const useAppStore = create<AppState>()(
           },
         })),
       setActiveProvider: (id) => set({ activeProviderId: id }),
+      selectModel: (providerId, model) =>
+        set((state) => {
+          const provider = state.providers[providerId];
+          if (!provider) return {};
+          return {
+            activeProviderId: providerId,
+            providers: { ...state.providers, [providerId]: { ...provider, defaultModel: model } },
+          };
+        }),
+      addProvider: (type) => {
+        const added = addProvider(get().providers, type);
+        set({ providers: added.providers });
+        return added.id;
+      },
+      removeProvider: (id) =>
+        set((state) => removeProvider(state.providers, state.activeProviderId, id)),
       setSystemSettings: (patch) =>
         set((state) => ({
           systemSettings: { ...state.systemSettings, ...patch },
