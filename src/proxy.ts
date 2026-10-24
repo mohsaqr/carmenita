@@ -20,7 +20,8 @@ import { getUserFromRequest } from "@/lib/auth";
  * PasswordGate instead.
  */
 
-const PUBLIC_PATHS = new Set(["/login", "/api/auth/login"]);
+// /api/health: the deploy's health gate calls it before anyone can sign in.
+const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/health"]);
 
 export function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;

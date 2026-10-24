@@ -244,6 +244,11 @@ describe("login proxy", () => {
     ).toBe("1");
   });
 
+  it("lets the deploy health check through while signed out, and nothing beside it", () => {
+    expect(proxy(new NextRequest("http://localhost/api/health")).headers.get("x-middleware-next")).toBe("1");
+    expect(proxy(new NextRequest("http://localhost/api/health/x")).status).toBe(401);
+  });
+
   it("passes requests that carry a valid session cookie", () => {
     expect(proxy(withCookie("http://localhost/bank")).headers.get("x-middleware-next")).toBe("1");
     expect(proxy(withCookie("http://localhost/api/bank/sets")).headers.get("x-middleware-next")).toBe("1");

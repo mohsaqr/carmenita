@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import path from "node:path";
+import { resolveDbPath } from "./client-path";
 import * as schema from "./schema";
 
 /**
@@ -19,18 +19,7 @@ declare global {
   var __carmenitaSqlite: Database.Database | undefined;
 }
 
-/**
- * Where the live database lives. `CARMENITA_DB` (absolute path) is set in
- * production so the DB sits outside the repo checkout — the deploy cron
- * runs `git reset --hard` there, and Next's standalone server chdirs into
- * `.next/standalone`. Defaults to ./carmenita.db for local dev.
- */
-export function resolveDbPath(
-  env: Record<string, string | undefined> = process.env,
-  cwd = process.cwd(),
-): string {
-  return path.resolve(cwd, env.CARMENITA_DB || "carmenita.db");
-}
+export { resolveDbPath } from "./client-path";
 
 function openDb(): { db: DB; sqlite: Database.Database } {
   const dbPath = resolveDbPath();
